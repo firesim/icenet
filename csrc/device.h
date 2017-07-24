@@ -1,16 +1,15 @@
+#ifndef __ICENET_DEVICE_H__
+#define __ICENET_DEVICE_H__
+
 #include <queue>
 #include <stdint.h>
 
 #include "fesvr/context.h"
-
-struct network_flit {
-    uint64_t data;
-    bool last;
-};
+#include "packet.h"
 
 class NetworkDevice {
   public:
-    NetworkDevice(const char *dev);
+    NetworkDevice();
     ~NetworkDevice();
 
     void tick(
@@ -34,10 +33,20 @@ class NetworkDevice {
     }
     uint64_t macaddr() { return _macaddr; }
     void set_macaddr(uint64_t macaddr) { _macaddr = macaddr; }
+    bool has_out_packet(void) { return !out_packets.empty(); }
+    network_packet *pop_out_packet(void) {
+        network_packet *pkt = out_packets.front();
+        out_packets.pop();
+        return pkt;
+    }
+    void push_in_packet(network_packet *packet) { in_packets.push(packet); }
 
   private:
     std::queue<network_flit> out_flits;
     std::queue<network_flit> in_flits;
+
+    std::queue<network_packet*> out_packets;
+    std::queue<network_packet*> in_packets;
 
     static void host_thread(void *arg);
     void run(void);
@@ -45,6 +54,7 @@ class NetworkDevice {
     context_t* target;
     context_t host;
 
-    int fd;
     uint64_t _macaddr;
 };
+
+#endif

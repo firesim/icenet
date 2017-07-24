@@ -1,14 +1,19 @@
 #include <vpi_user.h>
 #include <svdpi.h>
 
-#include "network.h"
+#include "device.h"
+#include "switch.h"
 
+class NetworkSwitch *netsw = NULL;
 class NetworkDevice *netdev = NULL;
 
 extern "C" void network_init(
         const char *devname)
 {
-    netdev = new NetworkDevice(devname);
+    netsw = new NetworkSwitch(devname);
+    netdev = new NetworkDevice();
+
+    netsw->add_device(netdev);
 }
 
 extern "C" void network_tick(
@@ -25,7 +30,7 @@ extern "C" void network_tick(
         unsigned char macaddr_valid,
         long long     macaddr_bits)
 {
-    if (!netdev) {
+    if (!netdev || !netsw) {
         *out_ready = 0;
         *in_valid = 0;
         *in_data = 0;
@@ -37,6 +42,9 @@ extern "C" void network_tick(
             out_valid, out_data, out_last,
             in_ready, macaddr_valid, macaddr_bits);
     netdev->switch_to_host();
+
+    netsw->distribute();
+    netsw->switch_to_worker();
 
     *out_ready = netdev->out_ready();
     *in_valid = netdev->in_valid();
