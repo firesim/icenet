@@ -1,5 +1,7 @@
 #include "switch.h"
 
+#include <inttypes.h>
+
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -162,15 +164,12 @@ void NetworkSwitch::distribute(void)
 
         if (dstmac == BCAST_MAC) {
             broadcast(packet, 0);
-            in_packets.pop();
             delete packet;
-        } else {
-            if (route(packet, dstmac)) {
-                fprintf(stderr, "Inbound packet has unrouteable destination\n");
-                abort();
-            }
-            in_packets.pop();
+        } else if (route(packet, dstmac)) {
+            fprintf(stderr, "Dropped packet for %" PRIx64 "\n", dstmac);
+            delete packet;
         }
+        in_packets.pop();
     }
 
     for (auto dev : devices) {
