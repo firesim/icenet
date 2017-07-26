@@ -12,30 +12,30 @@ import freechips.rocketchip.util.TwoWayCounter
 import testchipip.{StreamIO, StreamChannel, SeqQueue}
 import scala.util.Random
 
-object SimpleNIC {
+object IceNIC {
   val NET_IF_WIDTH = 64
   val NET_LEN_BITS = 16
 }
-import SimpleNIC._
+import IceNIC._
 
-class SimpleNicSendIO extends Bundle {
+class IceNicSendIO extends Bundle {
   val req = Decoupled(UInt(NET_IF_WIDTH.W))
   val comp = Flipped(Decoupled(Bool()))
 }
 
-class SimpleNicRecvIO extends Bundle {
+class IceNicRecvIO extends Bundle {
   val req = Decoupled(UInt(NET_IF_WIDTH.W))
   val comp = Flipped(Decoupled(UInt(NET_LEN_BITS.W)))
 }
 
-trait SimpleNicControllerBundle extends Bundle {
-  val send = new SimpleNicSendIO
-  val recv = new SimpleNicRecvIO
+trait IceNicControllerBundle extends Bundle {
+  val send = new IceNicSendIO
+  val recv = new IceNicRecvIO
   val macAddr = Valid(UInt(48.W))
 }
 
-trait SimpleNicControllerModule extends Module with HasRegMap {
-  val io: SimpleNicControllerBundle
+trait IceNicControllerModule extends Module with HasRegMap {
+  val io: IceNicControllerBundle
 
   val sendCompDown = Wire(init = false.B)
 
@@ -89,34 +89,34 @@ trait SimpleNicControllerModule extends Module with HasRegMap {
       RegField(48, macAddr, writeMacAddr)))
 }
 
-case class SimpleNicControllerParams(address: BigInt, beatBytes: Int)
+case class IceNicControllerParams(address: BigInt, beatBytes: Int)
 
 /*
  * Take commands from the CPU over TL2, expose as Queues
  */
-class SimpleNicController(c: SimpleNicControllerParams)(implicit p: Parameters)
+class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
   extends TLRegisterRouter(
-    c.address, "simple-nic", Seq("ucbbar,simple-nic"),
+    c.address, "ice-nic", Seq("ucbbar,ice-nic"),
     interrupts = 1, beatBytes = c.beatBytes)(
-      new TLRegBundle(c, _)    with SimpleNicControllerBundle)(
-      new TLRegModule(c, _, _) with SimpleNicControllerModule)
+      new TLRegBundle(c, _)    with IceNicControllerBundle)(
+      new TLRegModule(c, _, _) with IceNicControllerModule)
 
 /*
  * Send frames out
  */
-class SimpleNicSendPath(implicit p: Parameters)
+class IceNicSendPath(implicit p: Parameters)
     extends LazyModule {
   val node = TLClientNode(TLClientParameters(
-    name = "simple-nic-send", sourceId = IdRange(0, 1)))
-  lazy val module = new SimpleNicSendPathModule(this)
+    name = "ice-nic-send", sourceId = IdRange(0, 1)))
+  lazy val module = new IceNicSendPathModule(this)
 }
 
-class SimpleNicSendPathModule(outer: SimpleNicSendPath)
+class IceNicSendPathModule(outer: IceNicSendPath)
     extends LazyModuleImp(outer) {
 
   val io = IO(new Bundle {
     val tl = outer.node.bundleOut
-    val send = Flipped(new SimpleNicSendIO)
+    val send = Flipped(new IceNicSendIO)
     val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
   })
 
@@ -176,7 +176,7 @@ class SimpleNicSendPathModule(outer: SimpleNicSendPath)
   }
 }
 
-class SimpleNicDoubleBuffer extends Module {
+class IceNicDoubleBuffer extends Module {
   val io = IO(new StreamIO(NET_IF_WIDTH))
 
   val buffers = Seq.fill(2) { Mem(200, Bits(NET_IF_WIDTH.W)) }
@@ -218,18 +218,18 @@ class SimpleNicDoubleBuffer extends Module {
   io.out.bits.last := outLen === 1.U
 }
 
-class SimpleNicWriter(val nXacts: Int)(implicit p: Parameters)
+class IceNicWriter(val nXacts: Int)(implicit p: Parameters)
     extends LazyModule {
   val node = TLClientNode(TLClientParameters(
-    name = "simple-nic-recv", sourceId = IdRange(0, nXacts)))
-  lazy val module = new SimpleNicWriterModule(this)
+    name = "ice-nic-recv", sourceId = IdRange(0, nXacts)))
+  lazy val module = new IceNicWriterModule(this)
 }
 
-class SimpleNicWriterModule(outer: SimpleNicWriter)
+class IceNicWriterModule(outer: IceNicWriter)
     extends LazyModuleImp(outer) {
   val io = IO(new Bundle {
     val tl = outer.node.bundleOut
-    val recv = Flipped(new SimpleNicRecvIO)
+    val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
   })
 
@@ -282,23 +282,23 @@ class SimpleNicWriterModule(outer: SimpleNicWriter)
 /*
  * Recv frames
  */
-class SimpleNicRecvPath(nXacts: Int)(implicit p: Parameters)
+class IceNicRecvPath(nXacts: Int)(implicit p: Parameters)
     extends LazyModule {
-  val writer = LazyModule(new SimpleNicWriter(nXacts))
+  val writer = LazyModule(new IceNicWriter(nXacts))
   val node = TLOutputNode()
   node := writer.node
-  lazy val module = new SimpleNicRecvPathModule(this)
+  lazy val module = new IceNicRecvPathModule(this)
 }
 
-class SimpleNicRecvPathModule(outer: SimpleNicRecvPath)
+class IceNicRecvPathModule(outer: IceNicRecvPath)
     extends LazyModuleImp(outer) {
   val io = IO(new Bundle {
     val tl = outer.node.bundleOut // dma mem port
-    val recv = Flipped(new SimpleNicRecvIO)
+    val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
   })
 
-  val buffer = Module(new SimpleNicDoubleBuffer)
+  val buffer = Module(new IceNicDoubleBuffer)
   buffer.io.in <> io.in
 
   val writer = outer.writer.module
@@ -326,13 +326,13 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
  * For now, we elide the Gen by NIC components since we're talking to a 
  * custom network.
  */
-class SimpleNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
+class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
     (implicit p: Parameters) extends LazyModule {
 
-  val control = LazyModule(new SimpleNicController(
-    SimpleNicControllerParams(address, beatBytes)))
-  val sendPath = LazyModule(new SimpleNicSendPath)
-  val recvPath = LazyModule(new SimpleNicRecvPath(nXacts))
+  val control = LazyModule(new IceNicController(
+    IceNicControllerParams(address, beatBytes)))
+  val sendPath = LazyModule(new IceNicSendPath)
+  val recvPath = LazyModule(new IceNicRecvPath(nXacts))
 
   val mmionode = TLInputNode()
   val dmanode = TLOutputNode()
@@ -369,18 +369,18 @@ class SimNetwork extends BlackBox {
   })
 }
 
-trait HasPeripherySimpleNIC extends HasSystemNetworks {
+trait HasPeripheryIceNIC extends HasSystemNetworks {
   private val address = BigInt(0x10016000)
 
-  val simplenic = LazyModule(new SimpleNIC(address, socBusConfig.beatBytes))
+  val simplenic = LazyModule(new IceNIC(address, socBusConfig.beatBytes))
   simplenic.mmionode := TLFragmenter(
     socBusConfig.beatBytes, cacheBlockBytes)(socBus.node)
   fsb.node :=* simplenic.dmanode
   intBus.intnode := simplenic.intnode
 }
 
-trait HasPeripherySimpleNICModuleImp extends LazyMultiIOModuleImp {
-  val outer: HasPeripherySimpleNIC
+trait HasPeripheryIceNICModuleImp extends LazyMultiIOModuleImp {
+  val outer: HasPeripheryIceNIC
   val net = IO(new NICIO)
 
   net <> outer.simplenic.module.io.ext
