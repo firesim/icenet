@@ -1,4 +1,4 @@
-CFLAGS=-Wall -O2 -fPIC -std=c++11 -I$(RISCV)/include
+CFLAGS=-Wall -O2 -fPIC -std=c++11 -I$(RISCV)/include -D__STDC_FORMAT_MACROS
 BUILD ?= build
 
 objs := device.o switch.o
