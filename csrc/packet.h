@@ -52,19 +52,13 @@ static inline network_packet *network_packet_copy(network_packet *packet)
 
 static inline uint64_t random_macaddr(void)
 {
-    uint64_t macaddr = 0;
-    long *macaddr_bits = (long *) &macaddr;
-    int i;
+    uint64_t macaddr;
 
     // Generate random MAC according to
     // https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Virtualization/sect-Virtualization-Tips_and_tricks-Generating_a_new_unique_MAC_address.html
     srandom(time(0));
-
-    for (i = 0; (i * sizeof(long)) < sizeof(uint64_t); i++) {
-        macaddr_bits[i] = random();
-    }
-
-    macaddr &= 0xffff7f000000;
+    macaddr = random() & 0xffff7f;
+    macaddr <<= 24;
     macaddr |= 0x3e1600;
 
     return macaddr;
