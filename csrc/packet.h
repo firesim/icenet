@@ -2,6 +2,9 @@
 #define __ICENET_PACKET_H__
 
 #include <string.h>
+#include <time.h>
+#include <stdlib.h>
+#include <stdint.h>
 
 #define NET_IP_ALIGN 2
 #define ETH_MAX_WORDS 190
@@ -45,6 +48,26 @@ static inline network_packet *network_packet_copy(network_packet *packet)
     packet_copy->len = packet->len;
     memcpy(packet_copy->data, packet->data, packet->len * sizeof(uint64_t));
     return packet_copy;
+}
+
+static inline uint64_t random_macaddr(void)
+{
+    uint64_t macaddr = 0;
+    long *macaddr_bits = (long *) &macaddr;
+    int i;
+
+    // Generate random MAC according to
+    // https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Virtualization/sect-Virtualization-Tips_and_tricks-Generating_a_new_unique_MAC_address.html
+    srandom(time(0));
+
+    for (i = 0; (i * sizeof(long)) < sizeof(uint64_t); i++) {
+        macaddr_bits[i] = random();
+    }
+
+    macaddr &= 0xffff7f000000;
+    macaddr |= 0x3e1600;
+
+    return macaddr;
 }
 
 #endif
