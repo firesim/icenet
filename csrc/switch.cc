@@ -147,13 +147,13 @@ void NetworkSwitch::broadcast(network_packet *packet, uint64_t skipmac)
 
 int NetworkSwitch::route(network_packet *packet, uint64_t dstmac)
 {
-        for (auto dev : devices) {
-            if (dev->macaddr() == dstmac) {
-                dev->push_in_packet(packet);
-                return 0;
-            }
+    for (auto dev : devices) {
+        if (dev->macaddr() == dstmac) {
+            dev->push_in_packet(packet);
+            return 0;
         }
-        return -1;
+    }
+    return -1;
 }
 
 void NetworkSwitch::distribute(void)
