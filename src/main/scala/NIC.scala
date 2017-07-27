@@ -31,7 +31,7 @@ class IceNicRecvIO extends Bundle {
 trait IceNicControllerBundle extends Bundle {
   val send = new IceNicSendIO
   val recv = new IceNicRecvIO
-  val macAddr = Valid(UInt(48.W))
+  val macAddr = Input(UInt(48.W))
 }
 
 trait IceNicControllerModule extends Module with HasRegMap {
@@ -66,15 +66,6 @@ trait IceNicControllerModule extends Module with HasRegMap {
     (sendCompValid, true.B)
   }
 
-  val macAddr = RegInit(UInt(48.W), BigInt(48, new Random()).U)
-  io.macAddr.bits := macAddr
-
-  val writeMacAddr = (valid: Bool, data: UInt) => {
-    io.macAddr.valid := valid
-    when (valid) { macAddr := data }
-    true.B
-  }
-
   regmap(
     0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
     0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
@@ -85,8 +76,7 @@ trait IceNicControllerModule extends Module with HasRegMap {
       RegField.r(4, qDepth.U - recvReqQueue.io.count),
       RegField.r(4, sendCompCount),
       RegField.r(4, recvCompQueue.io.count)),
-    0x18 -> Seq(
-      RegField(48, macAddr, writeMacAddr)))
+    0x18 -> Seq(RegField.r(48, io.macAddr)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -307,7 +297,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
-  val macAddr = Valid(UInt(48.W))
+  val macAddr = Input(UInt(48.W))
 
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
@@ -357,7 +347,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
     // connect externally
     recvPath.module.io.in <> io.ext.in
     io.ext.out <> sendPath.module.io.out
-    io.ext.macAddr := control.module.io.macAddr
+    control.module.io.macAddr := io.ext.macAddr
   }
 }
 

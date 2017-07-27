@@ -11,8 +11,9 @@ void NetworkDevice::host_thread(void *arg)
         netdev->target->switch_to();
 }
 
-NetworkDevice::NetworkDevice()
+NetworkDevice::NetworkDevice(uint64_t macaddr)
 {
+    _macaddr = macaddr;
     target = context_t::current();
     host.init(host_thread, this);
 }
@@ -60,9 +61,7 @@ void NetworkDevice::tick(
             bool out_valid,
             uint64_t out_data,
             bool out_last,
-            bool in_ready,
-            bool macaddr_valid,
-            uint64_t macaddr_bits)
+            bool in_ready)
 {
     if (out_valid && out_ready()) {
         struct network_flit flt;
@@ -73,9 +72,5 @@ void NetworkDevice::tick(
 
     if (in_valid() && in_ready) {
         in_flits.pop();
-    }
-
-    if (_macaddr == 0 || macaddr_valid) {
-        _macaddr = macaddr_bits;
     }
 }

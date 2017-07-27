@@ -9,16 +9,14 @@
 
 class NetworkDevice {
   public:
-    NetworkDevice();
+    NetworkDevice(uint64_t macaddr);
     ~NetworkDevice();
 
     void tick(
             bool out_valid,
             uint64_t out_data,
             bool out_last,
-            bool in_ready,
-	    bool macaddr_valid,
-	    uint64_t macaddr_bits);
+            bool in_ready);
 
     bool out_ready() { return true; }
     bool in_valid() { return !in_flits.empty(); }

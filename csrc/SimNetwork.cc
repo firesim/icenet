@@ -1,6 +1,9 @@
 #include <vpi_user.h>
 #include <svdpi.h>
 
+#include <time.h>
+#include <stdlib.h>
+
 #include "device.h"
 #include "switch.h"
 
@@ -10,8 +13,23 @@ class NetworkDevice *netdev = NULL;
 extern "C" void network_init(
         const char *devname)
 {
+    uint64_t macaddr = 0;
+    long *macaddr_bits = (long *) &macaddr;
+    int i;
+
+    // Generate random MAC according to
+    // https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Virtualization/sect-Virtualization-Tips_and_tricks-Generating_a_new_unique_MAC_address.html
+    srandom(time(0));
+
+    for (i = 0; (i * sizeof(long)) < sizeof(uint64_t); i++) {
+        macaddr_bits[i] = random();
+    }
+
+    macaddr &= 0xffff7f000000;
+    macaddr |= 0x3e1600;
+
     netsw = new NetworkSwitch(devname);
-    netdev = new NetworkDevice();
+    netdev = new NetworkDevice(macaddr);
 
     netsw->add_device(netdev);
 }
@@ -27,8 +45,7 @@ extern "C" void network_tick(
         long long     *in_data,
         unsigned char *in_last,
 
-        unsigned char macaddr_valid,
-        long long     macaddr_bits)
+        long long     *macaddr)
 {
     if (!netdev || !netsw) {
         *out_ready = 0;
@@ -38,9 +55,7 @@ extern "C" void network_tick(
         return;
     }
 
-    netdev->tick(
-            out_valid, out_data, out_last,
-            in_ready, macaddr_valid, macaddr_bits);
+    netdev->tick(out_valid, out_data, out_last, in_ready);
     netdev->switch_to_host();
 
     netsw->distribute();
@@ -50,4 +65,5 @@ extern "C" void network_tick(
     *in_valid = netdev->in_valid();
     *in_data = netdev->in_data();
     *in_last = netdev->in_last();
+    *macaddr = netdev->macaddr();
 }

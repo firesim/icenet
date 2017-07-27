@@ -10,8 +10,7 @@ import "DPI-C" function void network_tick
     output longint in_data,
     output bit     in_last,
 
-    input  bit     macaddr_valid,
-    input  longint macaddr_bits
+    output longint macaddr
 );
 
 import "DPI-C" function void network_init(
@@ -32,8 +31,7 @@ module SimNetwork(
     output [63:0] net_in_bits_data,
     output        net_in_bits_last,
 
-    input         net_macAddr_valid,
-    input  [47:0] net_macAddr_bits
+    output [47:0] net_macAddr
 );
 
     string devname;
@@ -41,11 +39,13 @@ module SimNetwork(
     bit __in_valid;
     longint __in_data;
     bit __in_last;
+    longint __macaddr;
 
     reg        __out_ready_reg;
     reg        __in_valid_reg;
     reg [63:0] __in_data_reg;
     reg        __in_last_reg;
+    reg [47:0] __macaddr_reg;
 
     initial begin
         if ($value$plusargs("netdev=%s", devname) != 0) begin
@@ -77,13 +77,13 @@ module SimNetwork(
                 __in_data,
                 __in_last,
 
-                net_macAddr_valid,
-                net_macAddr_bits);
+                __macaddr);
 
             __out_ready_reg <= __out_ready;
             __in_valid_reg <= __in_valid;
             __in_data_reg <= __in_data;
             __in_last_reg <= __in_last;
+            __macaddr_reg <= __macaddr;
         end
     end
 
@@ -91,5 +91,6 @@ module SimNetwork(
     assign net_in_valid = __in_valid_reg;
     assign net_in_bits_data = __in_data_reg;
     assign net_in_bits_last = __in_last_reg;
+    assign net_macAddr = __macaddr_reg;
 
 endmodule
