@@ -171,12 +171,12 @@ class IceNicDoubleBuffer extends Module {
 
   val buffers = Seq.fill(2) { Mem(200, Bits(NET_IF_WIDTH.W)) }
 
-  val inIdx = Reg(init = 0.U(8.W))
-  val outIdx = Reg(init = 0.U(8.W))
-  val outLen = Reg(init = 0.U(8.W))
+  val inIdx = RegInit(0.U(8.W))
+  val outIdx = RegInit(0.U(8.W))
+  val outLen = RegInit(0.U(8.W))
   val outDone = outLen === 0.U
 
-  val phase = Reg(init = 0.U(1.W))
+  val phase = RegInit(0.U(1.W))
 
   io.in.ready := true.B
 
@@ -230,13 +230,13 @@ class IceNicWriterModule(outer: IceNicWriter)
   val addrBits = p(PAddrBits) - byteAddrBits
 
   val s_idle :: s_data :: s_complete :: Nil = Enum(3)
-  val state = Reg(init = s_idle)
+  val state = RegInit(s_idle)
 
-  val base_addr = Reg(init = 0.U(addrBits.W))
-  val idx = Reg(init = 0.U(addrBits.W))
+  val base_addr = RegInit(0.U(addrBits.W))
+  val idx = RegInit(0.U(addrBits.W))
   val addr_merged = base_addr + idx
 
-  val xact_busy = Reg(init = 0.U(outer.nXacts.W))
+  val xact_busy = RegInit(0.U(outer.nXacts.W))
   val xact_onehot = PriorityEncoderOH(~xact_busy)
   val can_send = !xact_busy.andR
 
