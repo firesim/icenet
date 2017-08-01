@@ -11,12 +11,7 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.TwoWayCounter
 import testchipip.{StreamIO, StreamChannel, SeqQueue}
 import scala.util.Random
-
-object IceNIC {
-  val NET_IF_WIDTH = 64
-  val NET_LEN_BITS = 16
-}
-import IceNIC._
+import IceNetConsts._
 
 class IceNicSendIO extends Bundle {
   val req = Decoupled(UInt(NET_IF_WIDTH.W))
