@@ -161,48 +161,6 @@ class IceNicSendPathModule(outer: IceNicSendPath)
   }
 }
 
-class IceNicDoubleBuffer extends Module {
-  val io = IO(new StreamIO(NET_IF_WIDTH))
-
-  val buffers = Seq.fill(2) { Mem(200, Bits(NET_IF_WIDTH.W)) }
-
-  val inIdx = RegInit(0.U(8.W))
-  val outIdx = RegInit(0.U(8.W))
-  val outLen = RegInit(0.U(8.W))
-  val outDone = outLen === 0.U
-
-  val phase = RegInit(0.U(1.W))
-
-  io.in.ready := true.B
-
-  when (io.in.fire()) {
-    inIdx := inIdx + 1.U
-    buffers.zipWithIndex.foreach { case (buffer, i) =>
-      when (~phase === i.U) {
-        buffer(inIdx) := io.in.bits.data
-      }
-    }
-    when (io.in.bits.last) {
-      inIdx := 0.U
-      // If writing out isn't finished, we just lose the whole frame
-      when (outDone) {
-        outIdx := 0.U
-        outLen := inIdx + 1.U
-        phase := ~phase
-      }
-    }
-  }
-
-  when (io.out.fire()) {
-    outIdx := outIdx + 1.U
-    outLen := outLen - 1.U
-  }
-
-  io.out.valid := !outDone
-  io.out.bits.data := Vec(buffers.map(_.read(outIdx)))(phase)
-  io.out.bits.last := outLen === 1.U
-}
-
 class IceNicWriter(val nXacts: Int)(implicit p: Parameters)
     extends LazyModule {
   val node = TLClientNode(TLClientParameters(
@@ -283,7 +241,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
   })
 
-  val buffer = Module(new IceNicDoubleBuffer)
+  val buffer = Module(new NetworkPacketBuffer(2, ETH_MAX_WORDS))
   buffer.io.in <> io.in
 
   val writer = outer.writer.module
