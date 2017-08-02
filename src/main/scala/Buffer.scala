@@ -47,17 +47,19 @@ class NetworkPacketBuffer(nPackets: Int, maxWords: Int) extends Module {
     }
 
     when (io.in.fire() && inPhase === i.U) {
-      val startDropping = inPhase === outPhase && bufValid(i) && inIdx === 0.U
+      val startDropping =
+        (inPhase === outPhase && bufValid(i)) ||
+        (inIdx === maxWords.U)
 
       when (startDropping) { inDrop := true.B }
       when (!startDropping && !inDrop) {
         buffer(inIdx) := io.in.bits.data
+        inIdx := inIdx + 1.U
       }
-      inIdx := inIdx + 1.U
 
       when (io.in.bits.last) {
         val nextPhase = wrapInc(inPhase)
-        when (!inDrop) {
+        when (!startDropping && !inDrop) {
           inPhase := nextPhase
           bufLen := inIdx + 1.U
         }
@@ -71,22 +73,26 @@ class NetworkPacketBuffer(nPackets: Int, maxWords: Int) extends Module {
 class NetworkPacketBufferTest extends UnitTest {
   val buffer = Module(new NetworkPacketBuffer(2, 2))
 
-  val inputs = Vec(1.U, 2.U, 3.U, 4.U, 5.U, 6.U)
-  val expected = Vec(inputs.take(4))
+  val inputData = Vec(1.U, 2.U, 3.U, 4.U, 5.U, 6.U, 7.U, 8.U, 9.U)
+  val inputLast = Vec(
+    false.B, true.B, false.B, false.B, true.B,
+    false.B, true.B, false.B, true.B)
+  val expectedData = Vec(1.U, 2.U, 6.U, 7.U)
+  val expectedLast = Vec(false.B, true.B, false.B, true.B)
 
   val s_start :: s_input :: s_output :: s_done :: Nil = Enum(4)
   val state = RegInit(s_start)
 
-  val (inputIdx, inputDone) = Counter(buffer.io.in.fire(), 6)
-  val (outputIdx, outputDone) = Counter(buffer.io.out.fire(), 4)
+  val (inputIdx, inputDone) = Counter(buffer.io.in.fire(), inputData.size)
+  val (outputIdx, outputDone) = Counter(buffer.io.out.fire(), expectedData.size)
 
   when (state === s_start && io.start) { state := s_input }
   when (inputDone) { state := s_output }
   when (outputDone) { state := s_done }
 
   buffer.io.in.valid := state === s_input
-  buffer.io.in.bits.data := inputs(inputIdx)
-  buffer.io.in.bits.last := inputIdx(0)
+  buffer.io.in.bits.data := inputData(inputIdx)
+  buffer.io.in.bits.last := inputLast(inputIdx)
   buffer.io.out.ready := state === s_output
 
   when (buffer.io.out.fire()) {
@@ -94,10 +100,13 @@ class NetworkPacketBufferTest extends UnitTest {
   }
 
   assert(
-    !buffer.io.out.valid || buffer.io.out.bits.data === expected(outputIdx),
+    !buffer.io.out.valid ||
+    buffer.io.out.bits.data === expectedData(outputIdx),
     "Data mismatch")
 
-  assert(!buffer.io.out.valid || buffer.io.out.bits.last === outputIdx(0),
+  assert(
+    !buffer.io.out.valid ||
+    buffer.io.out.bits.last === expectedLast(outputIdx),
     "Last mismatch")
 
   io.finished := state === s_done
