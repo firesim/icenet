@@ -6,6 +6,34 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.StreamIO
 import IceNetConsts._
 
+class BufferBRAM(n: Int) extends Module {
+  val addrBits = log2Ceil(n)
+  val io = IO(new Bundle {
+    val read = new Bundle {
+      val en = Input(Bool())
+      val addr = Input(UInt(addrBits.W))
+      val data = Output(Bits(NET_IF_WIDTH.W))
+    }
+    val write = new Bundle {
+      val en = Input(Bool())
+      val addr = Input(UInt(addrBits.W))
+      val data = Input(Bits(NET_IF_WIDTH.W))
+    }
+  })
+
+  val ram = Mem(n, Bits(NET_IF_WIDTH.W))
+
+  val wen = RegNext(io.write.en, false.B)
+  val waddr = RegNext(io.write.addr)
+  val wdata = RegNext(io.write.data)
+
+  when (wen) { ram.write(waddr, wdata) }
+
+  val rdata = ram.read(io.read.addr)
+
+  io.read.data := RegEnable(rdata, io.read.en)
+}
+
 class NetworkPacketBuffer[T <: Data](
     nPackets: Int, maxWords: Int = ETH_MAX_WORDS,
     headerWords: Int = ETH_HEAD_WORDS, headerType: T = new EthernetHeader)
@@ -18,7 +46,7 @@ class NetworkPacketBuffer[T <: Data](
 
   val idxBits = log2Ceil(maxWords + 1)
   val phaseBits = log2Ceil(nPackets)
-  val buffers = Seq.fill(nPackets) { Mem(maxWords, Bits(NET_IF_WIDTH.W)) }
+  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords)) }
   val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(NET_IF_WIDTH.W))) }
   val bufLengths = Seq.fill(nPackets) { RegInit(0.U(idxBits.W)) }
   val bufValid = Vec(bufLengths.map(len => len > 0.U))
@@ -33,21 +61,22 @@ class NetworkPacketBuffer[T <: Data](
   val outHeader = Vec(headers.map(
     header => headerType.fromBits(Cat(header.reverse))))
   val outDone = Vec(bufLengths.map(len => outIdx === len))
-  val outData = Vec(buffers.map(buffer => buffer.read(outIdx)))
   val outLast = Vec(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValid = !outDone(outPhase) && bufValid(outPhase)
 
   val outValidReg = RegInit(false.B)
 
   val ren = (io.stream.out.ready || !outValidReg) && outValid
+  val wen = Wire(init = false.B)
+  val hwen = wen && inIdx < headerWords.U
 
-  val outDataReg = Vec(outData.map(data => RegEnable(data, ren)))
-  val outLastReg = Vec(outLast.map(last => RegEnable(last, ren)))
   val outPhaseReg = RegEnable(outPhase, ren)
+  val outDataReg = Vec(buffers.map(buffer => buffer.io.read.data))(outPhaseReg)
+  val outLastReg = RegEnable(outLast(outPhase), ren)
 
   io.stream.out.valid := outValidReg
-  io.stream.out.bits.data := outDataReg(outPhaseReg)
-  io.stream.out.bits.last := outLastReg(outPhaseReg)
+  io.stream.out.bits.data := outDataReg
+  io.stream.out.bits.last := outLastReg
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := outHeader(outPhase)
@@ -57,43 +86,56 @@ class NetworkPacketBuffer[T <: Data](
 
   def wrapInc(x: UInt) = Mux(x === (nPackets - 1).U, 0.U, x + 1.U)
 
+  val bufLenSet = Wire(init = false.B)
+  val bufLenClear = Wire(init = false.B)
+
   for (i <- 0 until nPackets) {
     val buffer = buffers(i)
     val header = headers(i)
     val bufLen = bufLengths(i)
 
-    when (ren && outPhase === i.U) {
-      outIdx := outIdx + 1.U
-      when (outLast(outPhase)) {
-        outIdx := 0.U
-        outPhase := wrapInc(outPhase)
-        bufLen := 0.U
-      }
+    buffer.io.read.en := ren && outPhase === i.U
+    buffer.io.read.addr := outIdx
+    buffer.io.write.en := wen && inPhase === i.U
+    buffer.io.write.addr := inIdx
+    buffer.io.write.data := io.stream.in.bits.data
+
+    when (inPhase === i.U) {
+      when (bufLenSet) { bufLen := inIdx + 1.U }
+      when (bufLenClear) { bufLen := 0.U }
+
+      when (hwen) { header(inIdx) := io.stream.in.bits.data }
+    }
+  }
+
+  when (ren) {
+    outIdx := outIdx + 1.U
+    when (outLast(outPhase)) {
+      outIdx := 0.U
+      outPhase := wrapInc(outPhase)
+      bufLenClear := true.B
+    }
+  }
+
+  when (io.stream.in.fire()) {
+    val startDropping =
+      (inPhase === outPhase && bufValid(inPhase)) ||
+      (inIdx === maxWords.U)
+
+    when (startDropping) { inDrop := true.B }
+    when (!startDropping && !inDrop) {
+      wen := true.B
+      inIdx := inIdx + 1.U
     }
 
-    when (io.stream.in.fire() && inPhase === i.U) {
-      val startDropping =
-        (inPhase === outPhase && bufValid(i)) ||
-        (inIdx === maxWords.U)
-
-      when (startDropping) { inDrop := true.B }
+    when (io.stream.in.bits.last) {
+      val nextPhase = wrapInc(inPhase)
       when (!startDropping && !inDrop) {
-        when (inIdx < headerWords.U) {
-          header(inIdx) := io.stream.in.bits.data
-        }
-        buffer.write(inIdx, io.stream.in.bits.data)
-        inIdx := inIdx + 1.U
+        inPhase := nextPhase
+        bufLenSet := true.B
       }
-
-      when (io.stream.in.bits.last) {
-        val nextPhase = wrapInc(inPhase)
-        when (!startDropping && !inDrop) {
-          inPhase := nextPhase
-          bufLen := inIdx + 1.U
-        }
-        inIdx := 0.U
-        inDrop := false.B
-      }
+      inIdx := 0.U
+      inDrop := false.B
     }
   }
 }
