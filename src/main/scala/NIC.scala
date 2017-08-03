@@ -241,11 +241,11 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
   })
 
-  val buffer = Module(new NetworkPacketBuffer(2, ETH_MAX_WORDS))
-  buffer.io.in <> io.in
+  val buffer = Module(new NetworkPacketBuffer(10))
+  buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
-  writer.io.in <> SeqQueue(buffer.io.out, 2000)
+  writer.io.in <> buffer.io.stream.out
   writer.io.recv <> io.recv
 }
 
