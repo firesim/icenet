@@ -30,17 +30,30 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
-  val outData = Vec(buffers.map(buffer => buffer(outIdx)))
+  val outHeader = Vec(headers.map(
+    header => headerType.fromBits(Cat(header.reverse))))
   val outDone = Vec(bufLengths.map(len => outIdx === len))
+  val outData = Vec(buffers.map(buffer => buffer.read(outIdx)))
   val outLast = Vec(bufLengths.map(len => outIdx === (len - 1.U)))
-  val outHeader = Vec(headers.map(header => headerType.fromBits(Cat(header.reverse))))
+  val outValid = !outDone(outPhase) && bufValid(outPhase)
 
-  io.stream.out.valid := !outDone(outPhase) && bufValid(outPhase)
-  io.stream.out.bits.data := outData(outPhase)
-  io.stream.out.bits.last := outLast(outPhase)
+  val outValidReg = RegInit(false.B)
+
+  val ren = (io.stream.out.ready || !outValidReg) && outValid
+
+  val outDataReg = Vec(outData.map(data => RegEnable(data, ren)))
+  val outLastReg = Vec(outLast.map(last => RegEnable(last, ren)))
+  val outPhaseReg = RegEnable(outPhase, ren)
+
+  io.stream.out.valid := outValidReg
+  io.stream.out.bits.data := outDataReg(outPhaseReg)
+  io.stream.out.bits.last := outLastReg(outPhaseReg)
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := outHeader(outPhase)
+
+  when (io.stream.out.fire()) { outValidReg := false.B }
+  when (ren) { outValidReg := true.B }
 
   def wrapInc(x: UInt) = Mux(x === (nPackets - 1).U, 0.U, x + 1.U)
 
@@ -49,9 +62,9 @@ class NetworkPacketBuffer[T <: Data](
     val header = headers(i)
     val bufLen = bufLengths(i)
 
-    when (io.stream.out.fire() && outPhase === i.U) {
+    when (ren && outPhase === i.U) {
       outIdx := outIdx + 1.U
-      when (io.stream.out.bits.last) {
+      when (outLast(outPhase)) {
         outIdx := 0.U
         outPhase := wrapInc(outPhase)
         bufLen := 0.U
@@ -68,7 +81,7 @@ class NetworkPacketBuffer[T <: Data](
         when (inIdx < headerWords.U) {
           header(inIdx) := io.stream.in.bits.data
         }
-        buffer(inIdx) := io.stream.in.bits.data
+        buffer.write(inIdx, io.stream.in.bits.data)
         inIdx := inIdx + 1.U
       }
 
@@ -99,6 +112,7 @@ class NetworkPacketBufferTest extends UnitTest {
   val s_start :: s_input :: s_output :: s_done :: Nil = Enum(4)
   val state = RegInit(s_start)
 
+  val delayDone = Counter(10).inc()
   val (inputIdx, inputDone) = Counter(buffer.io.stream.in.fire(), inputData.size)
   val (outputIdx, outputDone) = Counter(buffer.io.stream.out.fire(), expectedData.size)
 
@@ -106,10 +120,10 @@ class NetworkPacketBufferTest extends UnitTest {
   when (inputDone) { state := s_output }
   when (outputDone) { state := s_done }
 
-  buffer.io.stream.in.valid := state === s_input
+  buffer.io.stream.in.valid := state === s_input && delayDone
   buffer.io.stream.in.bits.data := inputData(inputIdx)
   buffer.io.stream.in.bits.last := inputLast(inputIdx)
-  buffer.io.stream.out.ready := state === s_output
+  buffer.io.stream.out.ready := state === s_output && delayDone
 
   when (buffer.io.stream.out.fire()) {
     printf("out data: %x\n", buffer.io.stream.out.bits.data)
@@ -126,7 +140,7 @@ class NetworkPacketBufferTest extends UnitTest {
     "Last mismatch")
 
   assert(
-    !buffer.io.header.valid ||
+    !buffer.io.header.valid || outputIdx(0) ||
     buffer.io.header.bits === expectedHead(outputIdx >> 1.U),
     "Header mismatch")
 
