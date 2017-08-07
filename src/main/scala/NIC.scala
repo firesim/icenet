@@ -26,7 +26,7 @@ class IceNicRecvIO extends Bundle {
 trait IceNicControllerBundle extends Bundle {
   val send = new IceNicSendIO
   val recv = new IceNicRecvIO
-  val macAddr = Input(UInt(48.W))
+  val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
 
 trait IceNicControllerModule extends Module with HasRegMap {
@@ -71,7 +71,7 @@ trait IceNicControllerModule extends Module with HasRegMap {
       RegField.r(4, qDepth.U - recvReqQueue.io.count),
       RegField.r(4, sendCompCount),
       RegField.r(4, recvCompQueue.io.count)),
-    0x18 -> Seq(RegField.r(48, io.macAddr)))
+    0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -250,7 +250,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
-  val macAddr = Input(UInt(48.W))
+  val macAddr = Input(UInt(ETH_MAC_BITS.W))
 
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
