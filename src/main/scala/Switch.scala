@@ -105,96 +105,6 @@ class SimpleSwitch(address: BigInt, n: Int)
   }
 }
 
-class SwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
-  val io = IO(new Bundle {
-    val start = Input(Bool())
-    val finished = Output(Bool())
-    val net = new StreamIO(NET_IF_WIDTH)
-  })
-
-  val sendHeader = Wire(new EthernetHeader)
-  sendHeader.srcmac := srcmac.U
-  sendHeader.dstmac := dstmac.U
-  sendHeader.ethType := 0.U
-  sendHeader.padding := 0.U
-
-  val headerWords = 128 / NET_IF_WIDTH
-  val sendPacket = Vec(
-    Vec(headerWords, UInt(NET_IF_WIDTH.W)).fromBits(sendHeader.asUInt) ++
-    Seq(1, 2, 3, 4).map(_.U(64.W)))
-  val recvPacket = Reg(Vec(sendPacket.size, UInt(NET_IF_WIDTH.W)))
-  val recvHeader = (new EthernetHeader).fromBits(
-    Cat(recvPacket.take(headerWords).reverse))
-  val headerDone = RegInit(false.B)
-
-  val (outCnt, outDone) = Counter(io.net.out.fire(), sendPacket.size)
-  val (inCnt, inDone) = Counter(io.net.in.fire(), recvPacket.size)
-
-  val s_idle :: s_send :: s_recv :: s_done :: Nil = Enum(4)
-  val state = RegInit(s_idle)
-
-  when (state === s_idle && io.start) {
-    state := s_send
-  }
-
-  when (outDone) { state := s_recv }
-  when (io.net.in.fire()) {
-    recvPacket(inCnt) := io.net.in.bits.data
-    when (inCnt === (headerWords-1).U) { headerDone := true.B }
-    when (io.net.in.bits.last) { state := s_done }
-  }
-
-  assert(!headerDone ||
-    (recvHeader.srcmac === sendHeader.dstmac &&
-     recvHeader.dstmac === sendHeader.srcmac),
-   "Returned header incorrect")
-
-  assert(!headerDone || !io.net.in.valid ||
-    io.net.in.bits.data === sendPacket(inCnt),
-    "Returned payload incorrect")
-
-  io.finished := state === s_done
-  io.net.out.valid := state === s_send
-  io.net.out.bits.data := sendPacket(outCnt)
-  io.net.out.bits.last := outCnt === (sendPacket.size-1).U
-  io.net.in.ready := state === s_recv
-}
-
-class SwitchTestServer extends Module {
-  val io = IO(new Bundle {
-    val net = new StreamIO(NET_IF_WIDTH)
-  })
-
-  val headerWords = 128 / NET_IF_WIDTH
-
-  val recvPacket = Reg(Vec(headerWords + 4, UInt(NET_IF_WIDTH.W)))
-  val recvHeader = (new EthernetHeader).fromBits(
-    Cat(recvPacket.take(headerWords).reverse))
-
-  val sendHeader = Wire(new EthernetHeader)
-  sendHeader.ethType := 0.U
-  sendHeader.padding := 0.U
-  sendHeader.dstmac := recvHeader.srcmac
-  sendHeader.srcmac := recvHeader.dstmac
-
-  val sendPacket = Vec(
-    Vec(headerWords, UInt(NET_IF_WIDTH.W)).fromBits(sendHeader.asUInt) ++
-    recvPacket.drop(headerWords))
-  val sending = RegInit(false.B)
-
-  val (recvCnt, recvDone) = Counter(io.net.in.fire(), recvPacket.size)
-  val (sendCnt, sendDone) = Counter(io.net.out.fire(), sendPacket.size)
-
-  io.net.in.ready := !sending
-  io.net.out.valid := sending
-  io.net.out.bits.data := sendPacket(sendCnt)
-  io.net.out.bits.last := sendCnt === (sendPacket.size-1).U
-
-  when (io.net.in.fire()) { recvPacket(recvCnt) := io.net.in.bits.data }
-  when (recvDone) { sending := true.B }
-  when (sendDone) { sending := false.B }
-}
-
 class SwitchTestSetup(macaddrs: Seq[Long])
     (implicit p: Parameters) extends LazyModule {
   val node = TLClientNode(TLClientParameters(
@@ -236,7 +146,93 @@ class SwitchTestSetup(macaddrs: Seq[Long])
   }
 }
 
-class SwitchTest(implicit p: Parameters) extends LazyModule {
+
+
+class BasicSwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
+  val io = IO(new Bundle {
+    val start = Input(Bool())
+    val finished = Output(Bool())
+    val net = new StreamIO(NET_IF_WIDTH)
+  })
+
+  val sendHeader = Wire(new EthernetHeader)
+  sendHeader.srcmac := srcmac.U
+  sendHeader.dstmac := dstmac.U
+  sendHeader.ethType := 0.U
+  sendHeader.padding := 0.U
+
+  val headerWords = 128 / NET_IF_WIDTH
+  val sendPacket = Vec(
+    sendHeader.toWords() ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
+  val recvPacket = Reg(Vec(sendPacket.size, UInt(NET_IF_WIDTH.W)))
+  val recvHeader = (new EthernetHeader).fromWords(recvPacket)
+  val headerDone = RegInit(false.B)
+
+  val (outCnt, outDone) = Counter(io.net.out.fire(), sendPacket.size)
+  val (inCnt, inDone) = Counter(io.net.in.fire(), recvPacket.size)
+
+  val s_idle :: s_send :: s_recv :: s_done :: Nil = Enum(4)
+  val state = RegInit(s_idle)
+
+  when (state === s_idle && io.start) {
+    state := s_send
+  }
+
+  when (outDone) { state := s_recv }
+  when (io.net.in.fire()) {
+    recvPacket(inCnt) := io.net.in.bits.data
+    when (inCnt === (headerWords-1).U) { headerDone := true.B }
+    when (io.net.in.bits.last) { state := s_done }
+  }
+
+  assert(!headerDone ||
+    (recvHeader.srcmac === sendHeader.dstmac &&
+     recvHeader.dstmac === sendHeader.srcmac),
+   "BasicSwitchTest: Returned header incorrect")
+
+  assert(!headerDone || !io.net.in.valid ||
+    io.net.in.bits.data === sendPacket(inCnt),
+    "BasicSwitchTest: Returned payload incorrect")
+
+  io.finished := state === s_done
+  io.net.out.valid := state === s_send
+  io.net.out.bits.data := sendPacket(outCnt)
+  io.net.out.bits.last := outCnt === (sendPacket.size-1).U
+  io.net.in.ready := state === s_recv
+}
+
+class BasicSwitchTestServer extends Module {
+  val io = IO(new Bundle {
+    val net = new StreamIO(NET_IF_WIDTH)
+  })
+
+  val headerWords = 128 / NET_IF_WIDTH
+  val recvPacket = Reg(Vec(headerWords + 4, UInt(NET_IF_WIDTH.W)))
+  val recvHeader = (new EthernetHeader).fromWords(recvPacket)
+
+  val sendHeader = Wire(new EthernetHeader)
+  sendHeader.ethType := 0.U
+  sendHeader.padding := 0.U
+  sendHeader.dstmac := recvHeader.srcmac
+  sendHeader.srcmac := recvHeader.dstmac
+
+  val sendPacket = Vec(sendHeader.toWords() ++ recvPacket.drop(headerWords))
+  val sending = RegInit(false.B)
+
+  val (recvCnt, recvDone) = Counter(io.net.in.fire(), recvPacket.size)
+  val (sendCnt, sendDone) = Counter(io.net.out.fire(), sendPacket.size)
+
+  io.net.in.ready := !sending
+  io.net.out.valid := sending
+  io.net.out.bits.data := sendPacket(sendCnt)
+  io.net.out.bits.last := sendCnt === (sendPacket.size-1).U
+
+  when (io.net.in.fire()) { recvPacket(recvCnt) := io.net.in.bits.data }
+  when (recvDone) { sending := true.B }
+  when (sendDone) { sending := false.B }
+}
+
+class BasicSwitchTest(implicit p: Parameters) extends LazyModule {
   val clientMac = 0x665544332211L
   val serverMac = 0xCCBBAA998877L
 
@@ -246,8 +242,8 @@ class SwitchTest(implicit p: Parameters) extends LazyModule {
   switch.node := setup.node
 
   lazy val module = new LazyModuleImp(this) with HasUnitTestIO {
-    val client = Module(new SwitchTestClient(clientMac, serverMac))
-    val server = Module(new SwitchTestServer)
+    val client = Module(new BasicSwitchTestClient(clientMac, serverMac))
+    val server = Module(new BasicSwitchTestServer)
 
     switch.module.io.streams.zip(Seq(client.io.net, server.io.net)).foreach {
       case (a, b) => a.flipConnect(b)
