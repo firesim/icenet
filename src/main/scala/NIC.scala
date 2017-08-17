@@ -3,7 +3,7 @@ package icenet
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.coreplex.HasSystemBus
-import freechips.rocketchip.config.Parameters
+import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.rocket.PAddrBits
@@ -12,6 +12,10 @@ import freechips.rocketchip.util.TwoWayCounter
 import testchipip.{StreamIO, StreamChannel, SeqQueue}
 import scala.util.Random
 import IceNetConsts._
+
+case class NICConfig(inBufPackets: Int = 2)
+
+case object NICKey extends Field[NICConfig]
 
 class IceNicSendIO extends Bundle {
   val req = Decoupled(UInt(NET_IF_WIDTH.W))
@@ -241,7 +245,8 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
   })
 
-  val buffer = Module(new NetworkPacketBuffer(10))
+  val config = p(NICKey)
+  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
   buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
