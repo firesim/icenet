@@ -135,6 +135,7 @@ class IceNicSendPathModule(outer: IceNicSendPath)
     lgSize = byteAddrBits.U)._2
   io.out.valid := grantqueue.valid && state === s_send
   io.out.bits.data := grantqueue.bits.data
+  io.out.bits.keep := ~0.U(beatBytes.W)
   io.out.bits.last := sendlen === 0.U
   grantqueue.ready := io.out.ready && state === s_send
   io.send.comp.valid := state === s_comp

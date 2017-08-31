@@ -44,6 +44,9 @@ class NetworkPacketBuffer[T <: Data](
     val header = Valid(headerType)
   })
 
+  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
+    "NetworkPacketBuffer does not handle missing data")
+
   val idxBits = log2Ceil(maxWords + 1)
   val phaseBits = log2Ceil(nPackets)
   val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords)) }

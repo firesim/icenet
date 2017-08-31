@@ -24,11 +24,13 @@ module SimNetwork(
     input         net_out_valid,
     output        net_out_ready,
     input  [63:0] net_out_bits_data,
+    input  [7:0]  net_out_bits_keep,
     input         net_out_bits_last,
 
     output        net_in_valid,
     input         net_in_ready,
     output [63:0] net_in_bits_data,
+    output [7:0]  net_in_bits_keep,
     output        net_in_bits_last,
 
     output [47:0] net_macAddr
@@ -90,6 +92,7 @@ module SimNetwork(
     assign net_out_ready = __out_ready_reg;
     assign net_in_valid = __in_valid_reg;
     assign net_in_bits_data = __in_data_reg;
+    assign net_in_bits_keep = 8'hff;
     assign net_in_bits_last = __in_last_reg;
     assign net_macAddr = __macaddr_reg;
 
