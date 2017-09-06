@@ -166,6 +166,7 @@ class NetworkPacketBufferTest extends UnitTest {
   when (outputDone) { state := s_done }
 
   buffer.io.stream.in.valid := state === s_input && delayDone
+  buffer.io.stream.in.bits.keep := ~0.U((NET_IF_WIDTH/8).W)
   buffer.io.stream.in.bits.data := inputData(inputIdx)
   buffer.io.stream.in.bits.last := inputLast(inputIdx)
   buffer.io.stream.out.ready := state === s_output && delayDone

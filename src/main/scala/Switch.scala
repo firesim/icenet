@@ -119,7 +119,9 @@ class SimpleSwitch(address: BigInt, n: Int)
       val streams = Vec(n, new StreamIO(NET_IF_WIDTH))
     })
     val inBuffers  = Seq.fill(n) { Module(new NetworkPacketBuffer(2)) }
-    val outBuffers = Seq.fill(n) { Module(new NetworkPacketBuffer(2)) }
+    val outBuffers = Seq.fill(n) {
+      Module(new Queue(new StreamChannel(NET_IF_WIDTH), ETH_MAX_WORDS))
+    }
     val xbar = Module(new SimpleSwitchCrossbar(n))
 
     for (i <- 0 until n) {
@@ -130,8 +132,8 @@ class SimpleSwitch(address: BigInt, n: Int)
       inBuf.io.stream.in <> stream.in
       xbar.io.in(i) <> inBuf.io.stream.out
       xbar.io.headers(i) <> inBuf.io.header
-      outBuf.io.stream.in <> xbar.io.out(i)
-      stream.out <> outBuf.io.stream.out
+      outBuf.io.enq <> xbar.io.out(i)
+      stream.out <> outBuf.io.deq
       tcam.module.io.tcam(i) <> xbar.io.tcam(i)
     }
   }
@@ -187,13 +189,7 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
     val net = new StreamIO(NET_IF_WIDTH)
   })
 
-  val sendHeader = Wire(new EthernetHeader)
-  sendHeader.srcmac := srcmac.U
-  sendHeader.dstmac := dstmac.U
-  sendHeader.ethType := 0.U
-  sendHeader.padding := 0.U
-
-  val headerWords = 128 / NET_IF_WIDTH
+  val sendHeader = EthernetHeader(dstmac.U, srcmac.U, 0.U)
   val sendPacket = Vec(
     sendHeader.toWords() ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
   val recvPacket = Reg(Vec(sendPacket.size, UInt(NET_IF_WIDTH.W)))
@@ -213,7 +209,7 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
   when (outDone) { state := s_recv }
   when (io.net.in.fire()) {
     recvPacket(inCnt) := io.net.in.bits.data
-    when (inCnt === (headerWords-1).U) { headerDone := true.B }
+    when (inCnt === (ETH_HEAD_WORDS-1).U) { headerDone := true.B }
     when (io.net.in.bits.last) { state := s_done }
   }
 
@@ -228,6 +224,7 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
 
   io.finished := state === s_done
   io.net.out.valid := state === s_send
+  io.net.out.bits.keep := NET_FULL_KEEP
   io.net.out.bits.data := sendPacket(outCnt)
   io.net.out.bits.last := outCnt === (sendPacket.size-1).U
   io.net.in.ready := state === s_recv
@@ -238,17 +235,11 @@ class BasicSwitchTestServer extends Module {
     val net = new StreamIO(NET_IF_WIDTH)
   })
 
-  val headerWords = 128 / NET_IF_WIDTH
-  val recvPacket = Reg(Vec(headerWords + 4, UInt(NET_IF_WIDTH.W)))
+  val recvPacket = Reg(Vec(ETH_HEAD_WORDS + 4, UInt(NET_IF_WIDTH.W)))
   val recvHeader = (new EthernetHeader).fromWords(recvPacket)
 
-  val sendHeader = Wire(new EthernetHeader)
-  sendHeader.ethType := 0.U
-  sendHeader.padding := 0.U
-  sendHeader.dstmac := recvHeader.srcmac
-  sendHeader.srcmac := recvHeader.dstmac
-
-  val sendPacket = Vec(sendHeader.toWords() ++ recvPacket.drop(headerWords))
+  val sendHeader = EthernetHeader(recvHeader.srcmac, recvHeader.dstmac, 0.U)
+  val sendPacket = Vec(sendHeader.toWords() ++ recvPacket.drop(ETH_HEAD_WORDS))
   val sending = RegInit(false.B)
 
   val (recvCnt, recvDone) = Counter(io.net.in.fire(), recvPacket.size)
@@ -256,6 +247,7 @@ class BasicSwitchTestServer extends Module {
 
   io.net.in.ready := !sending
   io.net.out.valid := sending
+  io.net.out.bits.keep := NET_FULL_KEEP
   io.net.out.bits.data := sendPacket(sendCnt)
   io.net.out.bits.last := sendCnt === (sendPacket.size-1).U
 
@@ -302,16 +294,12 @@ class BroadcastTestSender(mac: Long) extends Module {
   val s_idle :: s_send :: s_done :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
-  val sendHeader = Wire(new EthernetHeader)
-  sendHeader.padding := 0.U
-  sendHeader.ethType := 0.U
-  sendHeader.dstmac := 0xFFFFFFFFFFFFL.U
-  sendHeader.srcmac := mac.U
-
+  val sendHeader = EthernetHeader(ETH_BCAST_MAC, mac.U, 0.U)
   val sendPacket = Vec(sendHeader.toWords() ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
   val (sendCnt, sendDone) = Counter(io.net.out.fire(), sendPacket.size)
 
   io.net.out.valid := state === s_send
+  io.net.out.bits.keep := NET_FULL_KEEP
   io.net.out.bits.data := sendPacket(sendCnt)
   io.net.out.bits.last := sendCnt === (sendPacket.size - 1).U
   io.net.in.ready := false.B
@@ -336,12 +324,7 @@ class BroadcastTestReceiver(srcmac: Long) extends Module {
   io.net.in.ready := state === s_recv
   io.finished := state === s_done
 
-  val expectedHeader = Wire(new EthernetHeader)
-  expectedHeader.padding := 0.U
-  expectedHeader.ethType := 0.U
-  expectedHeader.dstmac := 0xFFFFFFFFFFFFL.U
-  expectedHeader.srcmac := srcmac.U
-
+  val expectedHeader = EthernetHeader(ETH_BCAST_MAC, srcmac.U, 0.U)
   val expectedPacket = Vec(
     expectedHeader.toWords() ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
   val (recvCnt, recvDone) = Counter(
