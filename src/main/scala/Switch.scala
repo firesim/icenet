@@ -120,7 +120,8 @@ class SimpleSwitch(address: BigInt, n: Int)
     })
     val inBuffers  = Seq.fill(n) { Module(new NetworkPacketBuffer(2)) }
     val outBuffers = Seq.fill(n) {
-      Module(new Queue(new StreamChannel(NET_IF_WIDTH), ETH_MAX_WORDS))
+      val ethWords = ETH_MAX_BYTES * 8 / NET_IF_WIDTH
+      Module(new Queue(new StreamChannel(NET_IF_WIDTH), ethWords))
     }
     val xbar = Module(new SimpleSwitchCrossbar(n))
 
@@ -202,6 +203,8 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
   val s_idle :: s_send :: s_recv :: s_done :: Nil = Enum(4)
   val state = RegInit(s_idle)
 
+  val headerWords = ETH_HEAD_BYTES * 8 / NET_IF_WIDTH
+
   when (state === s_idle && io.start) {
     state := s_send
   }
@@ -209,7 +212,7 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long) extends Module {
   when (outDone) { state := s_recv }
   when (io.net.in.fire()) {
     recvPacket(inCnt) := io.net.in.bits.data
-    when (inCnt === (ETH_HEAD_WORDS-1).U) { headerDone := true.B }
+    when (inCnt === (headerWords-1).U) { headerDone := true.B }
     when (io.net.in.bits.last) { state := s_done }
   }
 
@@ -235,11 +238,12 @@ class BasicSwitchTestServer extends Module {
     val net = new StreamIO(NET_IF_WIDTH)
   })
 
-  val recvPacket = Reg(Vec(ETH_HEAD_WORDS + 4, UInt(NET_IF_WIDTH.W)))
+  val headerWords = ETH_HEAD_BYTES * 8 / NET_IF_WIDTH
+  val recvPacket = Reg(Vec(headerWords + 4, UInt(NET_IF_WIDTH.W)))
   val recvHeader = (new EthernetHeader).fromWords(recvPacket)
 
   val sendHeader = EthernetHeader(recvHeader.srcmac, recvHeader.dstmac, 0.U)
-  val sendPacket = Vec(sendHeader.toWords() ++ recvPacket.drop(ETH_HEAD_WORDS))
+  val sendPacket = Vec(sendHeader.toWords() ++ recvPacket.drop(headerWords))
   val sending = RegInit(false.B)
 
   val (recvCnt, recvDone) = Counter(io.net.in.fire(), recvPacket.size)

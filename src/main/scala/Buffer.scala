@@ -6,22 +6,22 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.StreamIO
 import IceNetConsts._
 
-class BufferBRAM(n: Int) extends Module {
+class BufferBRAM(n: Int, w: Int) extends Module {
   val addrBits = log2Ceil(n)
   val io = IO(new Bundle {
     val read = new Bundle {
       val en = Input(Bool())
       val addr = Input(UInt(addrBits.W))
-      val data = Output(Bits(NET_IF_WIDTH.W))
+      val data = Output(Bits(w.W))
     }
     val write = new Bundle {
       val en = Input(Bool())
       val addr = Input(UInt(addrBits.W))
-      val data = Input(Bits(NET_IF_WIDTH.W))
+      val data = Input(Bits(w.W))
     }
   })
 
-  val ram = Mem(n, Bits(NET_IF_WIDTH.W))
+  val ram = Mem(n, Bits(w.W))
 
   val wen = RegNext(io.write.en, false.B)
   val waddr = RegNext(io.write.addr)
@@ -35,22 +35,28 @@ class BufferBRAM(n: Int) extends Module {
 }
 
 class NetworkPacketBuffer[T <: Data](
-    nPackets: Int, maxWords: Int = ETH_MAX_WORDS,
-    headerWords: Int = ETH_HEAD_WORDS, headerType: T = new EthernetHeader)
-      extends Module {
+    nPackets: Int,
+    maxBytes: Int = ETH_MAX_BYTES,
+    headerBytes: Int = ETH_HEAD_BYTES,
+    headerType: T = new EthernetHeader,
+    wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
 
   val io = IO(new Bundle {
-    val stream = new StreamIO(NET_IF_WIDTH)
+    val stream = new StreamIO(wordBytes * 8)
     val header = Valid(headerType)
   })
 
   assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
     "NetworkPacketBuffer does not handle missing data")
 
+  val maxWords = maxBytes / wordBytes
+  val headerWords = headerBytes / wordBytes
+  val wordBits = wordBytes * 8
+
   val idxBits = log2Ceil(maxWords + 1)
   val phaseBits = log2Ceil(nPackets)
-  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords)) }
-  val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(NET_IF_WIDTH.W))) }
+  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, wordBits)) }
+  val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(wordBits.W))) }
   val bufLengths = Seq.fill(nPackets) { RegInit(0.U(idxBits.W)) }
   val bufValid = Vec(bufLengths.map(len => len > 0.U))
 
@@ -144,7 +150,7 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest {
-  val buffer = Module(new NetworkPacketBuffer(2, 2, 2, UInt(128.W)))
+  val buffer = Module(new NetworkPacketBuffer(2, 8, 8, UInt(64.W), 4))
 
   val inputData = Vec(1.U, 2.U, 3.U, 4.U, 5.U, 6.U, 7.U, 8.U, 9.U)
   val inputLast = Vec(
@@ -152,7 +158,7 @@ class NetworkPacketBufferTest extends UnitTest {
     false.B, true.B, false.B, true.B)
   val expectedData = Vec(1.U, 2.U, 6.U, 7.U)
   val expectedLast = Vec(false.B, true.B, false.B, true.B)
-  val expectedHead = Vec(Cat(2.U(64.W), 1.U(64.W)), Cat(7.U(64.W), 6.U(64.W)))
+  val expectedHead = Vec(Cat(2.U(32.W), 1.U(32.W)), Cat(7.U(32.W), 6.U(32.W)))
 
   val s_start :: s_input :: s_output :: s_done :: Nil = Enum(4)
   val state = RegInit(s_start)
@@ -166,7 +172,7 @@ class NetworkPacketBufferTest extends UnitTest {
   when (outputDone) { state := s_done }
 
   buffer.io.stream.in.valid := state === s_input && delayDone
-  buffer.io.stream.in.bits.keep := ~0.U((NET_IF_WIDTH/8).W)
+  buffer.io.stream.in.bits.keep := ~0.U(4.W)
   buffer.io.stream.in.bits.data := inputData(inputIdx)
   buffer.io.stream.in.bits.last := inputLast(inputIdx)
   buffer.io.stream.out.ready := state === s_output && delayDone

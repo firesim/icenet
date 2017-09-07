@@ -11,19 +11,23 @@ import IceNetConsts._
 class NetworkTap[T <: Data](
     selectFunc: T => Bool,
     headerTyp: T = new EthernetHeader,
-    headerWords: Int = ETH_HEAD_WORDS) extends Module {
+    headerBytes: Int = ETH_HEAD_BYTES,
+    wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
+
+  val wordBits = wordBytes * 8
+  val headerWords = headerBytes / wordBytes
 
   val io = IO(new Bundle {
-    val inflow = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
-    val backflow = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
-    val passthru = Decoupled(new StreamChannel(NET_IF_WIDTH))
-    val tapout = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val inflow = Flipped(Decoupled(new StreamChannel(wordBits)))
+    val backflow = Flipped(Decoupled(new StreamChannel(wordBits)))
+    val passthru = Decoupled(new StreamChannel(wordBits))
+    val tapout = Decoupled(new StreamChannel(wordBits))
   })
 
-  val headerVec = Reg(Vec(ETH_HEAD_WORDS, UInt(NET_IF_WIDTH.W)))
+  val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
   val header = headerTyp.fromBits(headerVec.toBits)
 
-  val idxBits = log2Ceil(ETH_HEAD_WORDS)
+  val idxBits = log2Ceil(headerWords)
   val headerIdx = RegInit(0.U(idxBits.W))
   val headerLen = Reg(UInt(idxBits.W))
   val bodyLess = Reg(Bool())
@@ -63,7 +67,7 @@ class NetworkTap[T <: Data](
     headerIdx := headerIdx + 1.U
     headerVec(headerIdx) := io.inflow.bits.data
 
-    when (io.inflow.bits.last || headerIdx === (ETH_HEAD_WORDS-1).U) {
+    when (io.inflow.bits.last || headerIdx === (headerWords-1).U) {
       headerLen := headerIdx
       headerIdx := 0.U
       bodyLess := io.inflow.bits.last
