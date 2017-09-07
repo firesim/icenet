@@ -59,6 +59,9 @@ class NetworkTap[T <: Data](
     s_passthru_header -> (bodyLess && headerIdx === headerLen),
     s_passthru_body -> io.inflow.bits.last,
     s_backflow_body -> io.backflow.bits.last))
+  io.passthru.bits.keep := MuxLookup(state, ~0.U(wordBytes.W), Seq(
+    s_passthru_body -> io.inflow.bits.keep,
+    s_backflow_body -> io.backflow.bits.keep))
 
   io.tapout.valid := state === s_tapout_body && io.inflow.valid
   io.tapout.bits := io.inflow.bits
@@ -73,6 +76,9 @@ class NetworkTap[T <: Data](
       bodyLess := io.inflow.bits.last
       state := Mux(io.inflow.bits.last, s_passthru_header, s_check_header)
     }
+
+    assert(io.inflow.bits.keep.andR,
+      "NetworkTap header word cannot be incomplete")
   }
 
   when (state === s_check_header) {
@@ -103,6 +109,7 @@ class NetworkTap[T <: Data](
 }
 
 class NetworkTapTest extends UnitTest {
+  val ifWidth = 32
   val sendHeaders = Seq(
     EthernetHeader(1.U, 2.U, 0x800.U),
     EthernetHeader(1.U, 3.U, 0x800.U),
@@ -112,7 +119,7 @@ class NetworkTapTest extends UnitTest {
     Seq(),
     Seq(22.U, 16.U))
   val sendPayloads = sendHeaders.zip(sendBodies).map {
-    case (header, body) => Vec(header.toWords() ++ body)
+    case (header, body) => Vec(header.toWords(ifWidth) ++ body)
   }
 
   val sizes = sendPayloads.map(_.size)
@@ -126,21 +133,24 @@ class NetworkTapTest extends UnitTest {
   val sending = RegInit(false.B)
 
   val tap = Module(new NetworkTap(
-    (header: EthernetHeader) => header.ethType === 0x800.U))
+    (header: EthernetHeader) => header.ethType === 0x800.U,
+    wordBytes = ifWidth / 8))
   tap.io.inflow.valid := sending
   tap.io.inflow.bits.data := sendData
   tap.io.inflow.bits.last := sendLast
+  tap.io.inflow.bits.keep := ~0.U((ifWidth/8).W)
 
-  val backQueue = Module(new Queue(new StreamChannel(NET_IF_WIDTH), maxSize))
+  val backQueue = Module(new Queue(new StreamChannel(ifWidth), maxSize))
   backQueue.io.enq <> tap.io.tapout
   tap.io.backflow.valid := backQueue.io.deq.valid
   tap.io.backflow.bits.data := backQueue.io.deq.bits.data + 1.U
   tap.io.backflow.bits.last := backQueue.io.deq.bits.last
+  tap.io.backflow.bits.keep := backQueue.io.deq.bits.keep
   backQueue.io.deq.ready := tap.io.backflow.ready
 
   val recvBodies = sendBodies.head.map(_ + 1.U) +: sendBodies.tail
   val recvPayloads = sendHeaders.zip(recvBodies).map {
-    case (header, body) => Vec(header.toWords() ++ body)
+    case (header, body) => Vec(header.toWords(ifWidth) ++ body)
   }
 
   val recvPhase = RegInit(0.U(log2Ceil(nPhases).W))
@@ -181,6 +191,7 @@ class NetworkTapTest extends UnitTest {
 
   assert(!tap.io.passthru.valid ||
          (tap.io.passthru.bits.data === recvData &&
-          tap.io.passthru.bits.last === recvLast),
-      "NetworkTapTest: received data or last incorrect")
+          tap.io.passthru.bits.last === recvLast &&
+          tap.io.passthru.bits.keep.andR),
+      "NetworkTapTest: received data, last, or keep incorrect")
 }
