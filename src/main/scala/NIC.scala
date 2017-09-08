@@ -321,17 +321,17 @@ class SimNetwork extends BlackBox {
 trait HasPeripheryIceNIC extends HasSystemBus {
   private val address = BigInt(0x10016000)
 
-  val simplenic = LazyModule(new IceNIC(address, sbus.beatBytes))
-  simplenic.mmionode := sbus.toVariableWidthSlaves
-  sbus.fromSyncPorts() :=* simplenic.dmanode
-  ibus.fromSync := simplenic.intnode
+  val icenic = LazyModule(new IceNIC(address, sbus.beatBytes))
+  icenic.mmionode := sbus.toVariableWidthSlaves
+  sbus.fromSyncPorts() :=* icenic.dmanode
+  ibus.fromSync := icenic.intnode
 }
 
 trait HasPeripheryIceNICModuleImp extends LazyMultiIOModuleImp {
   val outer: HasPeripheryIceNIC
   val net = IO(new NICIO)
 
-  net <> outer.simplenic.module.io.ext
+  net <> outer.icenic.module.io.ext
 
   def connectNicLoopback(qDepth: Int = 64) {
     net.in <> Queue(net.out, qDepth)
