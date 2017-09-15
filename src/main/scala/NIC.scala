@@ -113,16 +113,22 @@ class IceNicSendPathModule(outer: IceNicSendPath)
   val beatBytes = tl.params.dataBits / 8
   val byteAddrBits = log2Ceil(beatBytes)
   val addrBits = p(PAddrBits) - byteAddrBits
-  val lenBits = NET_LEN_BITS - byteAddrBits
+  val lenBits = NET_LEN_BITS - byteAddrBits - 1
   val midPoint = NET_IF_WIDTH - NET_LEN_BITS
-  val packlen = io.send.req.bits(NET_IF_WIDTH - 1, midPoint)
+  val packpart = io.send.req.bits(NET_IF_WIDTH - 1)
+  val packlen = io.send.req.bits(NET_IF_WIDTH - 2, midPoint)
   val packaddr = io.send.req.bits(midPoint - 1, 0)
 
   // we allow one TL request at a time to avoid tracking
   val s_idle :: s_read :: s_send :: s_comp :: Nil = Enum(4)
   val state = RegInit(s_idle)
+
+  // Physical (word) address in memory
   val sendaddr = Reg(UInt(addrBits.W))
+  // Number of words to send
   val sendlen  = Reg(UInt(lenBits.W))
+  // 0 if last packet in sequence, 1 otherwise
+  val sendpart = Reg(Bool())
 
   val edge = outer.node.edgesOut(0)
   val grantqueue = Queue(tl.d, 1)
@@ -136,7 +142,7 @@ class IceNicSendPathModule(outer: IceNicSendPath)
   io.out.valid := grantqueue.valid && state === s_send
   io.out.bits.data := grantqueue.bits.data
   io.out.bits.keep := ~0.U(beatBytes.W)
-  io.out.bits.last := sendlen === 0.U
+  io.out.bits.last := sendlen === 0.U && !sendpart
   grantqueue.ready := io.out.ready && state === s_send
   io.send.comp.valid := state === s_comp
   io.send.comp.bits := true.B
@@ -144,6 +150,7 @@ class IceNicSendPathModule(outer: IceNicSendPath)
   when (io.send.req.fire()) {
     sendaddr := packaddr >> byteAddrBits.U
     sendlen  := packlen  >> byteAddrBits.U
+    sendpart := packpart
     state := s_read
 
     assert(packaddr(byteAddrBits-1,0) === 0.U &&
