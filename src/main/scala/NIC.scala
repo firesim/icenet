@@ -6,10 +6,9 @@ import freechips.rocketchip.coreplex.HasSystemBus
 import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
-import freechips.rocketchip.rocket.PAddrBits
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.TwoWayCounter
-import testchipip.{StreamIO, StreamChannel, SeqQueue}
+import testchipip.{StreamIO, StreamChannel, SeqQueue, TLHelper}
 import scala.util.Random
 import IceNetConsts._
 
@@ -33,7 +32,7 @@ trait IceNicControllerBundle extends Bundle {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
 
-trait IceNicControllerModule extends Module with HasRegMap {
+trait IceNicControllerModule extends HasRegMap {
   val io: IceNicControllerBundle
 
   val sendCompDown = Wire(init = false.B)
@@ -95,8 +94,8 @@ class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
  */
 class IceNicSendPath(implicit p: Parameters)
     extends LazyModule {
-  val node = TLClientNode(TLClientParameters(
-    name = "ice-nic-send", sourceId = IdRange(0, 1)))
+  val node = TLHelper.makeClientNode(
+    name = "ice-nic-send", sourceId = IdRange(0, 1))
   lazy val module = new IceNicSendPathModule(this)
 }
 
@@ -104,15 +103,15 @@ class IceNicSendPathModule(outer: IceNicSendPath)
     extends LazyModuleImp(outer) {
 
   val io = IO(new Bundle {
-    val tl = outer.node.bundleOut
     val send = Flipped(new IceNicSendIO)
     val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
   })
 
-  val tl = io.tl(0)
+  val (tl, edge) = outer.node.out(0)
   val beatBytes = tl.params.dataBits / 8
   val byteAddrBits = log2Ceil(beatBytes)
-  val addrBits = p(PAddrBits) - byteAddrBits
+  val fullAddrBits = tl.params.addressBits
+  val addrBits = fullAddrBits - byteAddrBits
   val lenBits = NET_LEN_BITS - byteAddrBits - 1
   val midPoint = NET_IF_WIDTH - NET_LEN_BITS
   val packpart = io.send.req.bits(NET_IF_WIDTH - 1)
@@ -130,7 +129,6 @@ class IceNicSendPathModule(outer: IceNicSendPath)
   // 0 if last packet in sequence, 1 otherwise
   val sendpart = Reg(Bool())
 
-  val edge = outer.node.edgesOut(0)
   val grantqueue = Queue(tl.d, 1)
 
   io.send.req.ready := state === s_idle
@@ -175,24 +173,23 @@ class IceNicSendPathModule(outer: IceNicSendPath)
 
 class IceNicWriter(val nXacts: Int)(implicit p: Parameters)
     extends LazyModule {
-  val node = TLClientNode(TLClientParameters(
-    name = "ice-nic-recv", sourceId = IdRange(0, nXacts)))
+  val node = TLHelper.makeClientNode(
+    name = "ice-nic-recv", sourceId = IdRange(0, nXacts))
   lazy val module = new IceNicWriterModule(this)
 }
 
 class IceNicWriterModule(outer: IceNicWriter)
     extends LazyModuleImp(outer) {
   val io = IO(new Bundle {
-    val tl = outer.node.bundleOut
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
   })
 
-  val tl = io.tl(0)
-  val edge = outer.node.edgesOut(0)
+  val (tl, edge) = outer.node.out(0)
   val beatBytes = tl.params.dataBits / 8
+  val fullAddrBits = tl.params.addressBits
   val byteAddrBits = log2Ceil(beatBytes)
-  val addrBits = p(PAddrBits) - byteAddrBits
+  val addrBits = fullAddrBits - byteAddrBits
 
   val s_idle :: s_data :: s_complete :: Nil = Enum(3)
   val state = RegInit(s_idle)
@@ -240,7 +237,7 @@ class IceNicWriterModule(outer: IceNicWriter)
 class IceNicRecvPath(nXacts: Int)(implicit p: Parameters)
     extends LazyModule {
   val writer = LazyModule(new IceNicWriter(nXacts))
-  val node = TLOutputNode()
+  val node = TLIdentityNode()
   node := writer.node
   lazy val module = new IceNicRecvPathModule(this)
 }
@@ -248,7 +245,6 @@ class IceNicRecvPath(nXacts: Int)(implicit p: Parameters)
 class IceNicRecvPathModule(outer: IceNicRecvPath)
     extends LazyModuleImp(outer) {
   val io = IO(new Bundle {
-    val tl = outer.node.bundleOut // dma mem port
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
   })
@@ -290,9 +286,9 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
   val sendPath = LazyModule(new IceNicSendPath)
   val recvPath = LazyModule(new IceNicRecvPath(nXacts))
 
-  val mmionode = TLInputNode()
-  val dmanode = TLOutputNode()
-  val intnode = IntOutputNode()
+  val mmionode = TLIdentityNode()
+  val dmanode = TLIdentityNode()
+  val intnode = IntIdentityNode()
 
   control.node := mmionode
   dmanode := sendPath.node
@@ -301,10 +297,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
-      val tlout = dmanode.bundleOut // move packets in/out of mem
-      val tlin = mmionode.bundleIn  // commands from cpu
       val ext = new NICIO
-      val interrupt = intnode.bundleOut
     })
 
     sendPath.module.io.send <> control.module.io.send
@@ -334,7 +327,7 @@ trait HasPeripheryIceNIC extends HasSystemBus {
   ibus.fromSync := icenic.intnode
 }
 
-trait HasPeripheryIceNICModuleImp extends LazyMultiIOModuleImp {
+trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   val outer: HasPeripheryIceNIC
   val net = IO(new NICIO)
 
@@ -344,7 +337,7 @@ trait HasPeripheryIceNICModuleImp extends LazyMultiIOModuleImp {
     net.in <> Queue(net.out, qDepth)
   }
 
-  def connectSimNetwork(dummy: Int = 0) {
+  def connectSimNetwork(clock: Clock, reset: Bool) {
     val sim = Module(new SimNetwork)
     sim.io.clock := clock
     sim.io.reset := reset

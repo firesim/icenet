@@ -5,7 +5,7 @@ import chisel3.util._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
-import freechips.rocketchip.unittest.{HasUnitTestIO, UnitTest}
+import freechips.rocketchip.unittest.{HasUnitTestIO, UnitTest, UnitTestIO}
 import freechips.rocketchip.util.HellaPeekingArbiter
 import testchipip._
 import IceNetConsts._
@@ -108,14 +108,13 @@ class SimpleSwitchCrossbar(n: Int) extends Module {
 class SimpleSwitch(address: BigInt, n: Int)
     (implicit p: Parameters) extends LazyModule {
 
-  val node = TLInputNode()
+  val node = TLIdentityNode()
   val tcam = LazyModule(new TCAM(address, n, NET_IF_WIDTH, n))
 
   tcam.node := node
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
-      val tl = node.bundleIn
       val streams = Vec(n, new StreamIO(NET_IF_WIDTH))
     })
     val inBuffers  = Seq.fill(n) { Module(new NetworkPacketBuffer(2)) }
@@ -142,13 +141,12 @@ class SimpleSwitch(address: BigInt, n: Int)
 
 class SwitchTestSetup(macaddrs: Seq[Long])
     (implicit p: Parameters) extends LazyModule {
-  val node = TLClientNode(TLClientParameters(
+  val node = TLHelper.makeClientNode(
     name = "switch-test-setup",
-    sourceId = IdRange(0, 1)))
+    sourceId = IdRange(0, 1))
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
-      val tl = node.bundleOut
       val start = Input(Bool())
       val finished = Output(Bool())
     })
@@ -160,8 +158,7 @@ class SwitchTestSetup(macaddrs: Seq[Long])
       macaddrs.map(_.U(ETH_MAC_BITS.W)) ++
       Seq.fill(macaddrs.size) { ~0.U(ETH_MAC_BITS.W) })
 
-    val tl = io.tl(0)
-    val edge = node.edgesOut(0)
+    val (tl, edge) = node.out(0)
 
     val (writeCnt, writeDone) = Counter(tl.d.fire(), macaddrs.size * 2)
 
@@ -270,6 +267,7 @@ class BasicSwitchTest(implicit p: Parameters) extends LazyModule {
   switch.node := setup.node
 
   lazy val module = new LazyModuleImp(this) with HasUnitTestIO {
+    val io = IO(new Bundle with UnitTestIO)
     val client = Module(new BasicSwitchTestClient(clientMac, serverMac))
     val server = Module(new BasicSwitchTestServer)
 
@@ -353,6 +351,7 @@ class BroadcastTest(implicit p: Parameters) extends LazyModule {
   switch.node := setup.node
 
   lazy val module = new LazyModuleImp(this) with HasUnitTestIO {
+    val io = IO(new Bundle with UnitTestIO)
     val sender = Module(new BroadcastTestSender(macAddrs.head))
     val receivers = Seq.fill(3) {
       Module(new BroadcastTestReceiver(macAddrs.head))
