@@ -16,6 +16,10 @@ object IceNetConsts {
   val IPV4_HEAD_BYTES = 20
   val UDP_HEAD_BYTES = 8
 
+  val RLIMIT_MAX_INC = 256
+  val RLIMIT_MAX_PERIOD = 256
+  val RLIMIT_MAX_SIZE = 256
+
   def NET_FULL_KEEP = ~0.U(NET_IF_BYTES.W)
   def ETH_BCAST_MAC = ~0.U(ETH_MAC_BITS.W)
 }

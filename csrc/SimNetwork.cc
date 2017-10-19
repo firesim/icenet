@@ -7,9 +7,28 @@
 class NetworkSwitch *netsw = NULL;
 class NetworkDevice *netdev = NULL;
 
-extern "C" void network_init(
-        const char *devname)
+static inline int euclid(int a, int b)
 {
+    while (b > 0) {
+        int t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+extern "C" void network_init(
+        const char *devname,
+        int rlimit_gbps,
+        char *rlimit_inc,
+        char *rlimit_period)
+{
+    int inc = rlimit_gbps, period = 64;
+    int gcd = euclid(inc, period);
+
+    *rlimit_inc = inc / gcd;
+    *rlimit_period = (period / gcd) - 1;
+
     netsw = new NetworkSwitch(devname);
     netdev = new NetworkDevice(random_macaddr());
 

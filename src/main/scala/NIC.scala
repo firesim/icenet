@@ -7,16 +7,14 @@ import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
-import freechips.rocketchip.util.TwoWayCounter
+import freechips.rocketchip.util.{TwoWayCounter, PlusArg}
 import testchipip.{StreamIO, StreamChannel, SeqQueue, TLHelper}
 import scala.util.Random
 import IceNetConsts._
 
 case class NICConfig(
   inBufPackets: Int = 2,
-  limitInc: Int = 1,
-  limitPeriod: Int = 0,
-  limitSize: Int = 2)
+  outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES)
 
 case object NICKey extends Field[NICConfig]
 
@@ -93,17 +91,40 @@ class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
       new TLRegBundle(c, _)    with IceNicControllerBundle)(
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
+class IceNicSendPath(implicit p: Parameters) extends LazyModule {
+  val reader = LazyModule(new IceNicReader)
+  val node = TLIdentityNode()
+  node := reader.node
+
+  val config = p(NICKey)
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle {
+      val send = Flipped(new IceNicSendIO)
+      val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+      val rlimit = Input(new RateLimiterSettings)
+    })
+
+    reader.module.io.send <> io.send
+
+    val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
+    limiter.io.in <> Queue(reader.module.io.out, config.outBufFlits)
+    limiter.io.settings := io.rlimit
+    io.out <> limiter.io.out
+  }
+}
+
 /*
  * Send frames out
  */
-class IceNicSendPath(implicit p: Parameters)
+class IceNicReader(implicit p: Parameters)
     extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "ice-nic-send", sourceId = IdRange(0, 1))
-  lazy val module = new IceNicSendPathModule(this)
+  lazy val module = new IceNicReaderModule(this)
 }
 
-class IceNicSendPathModule(outer: IceNicSendPath)
+class IceNicReaderModule(outer: IceNicReader)
     extends LazyModuleImp(outer) {
 
   val io = IO(new Bundle {
@@ -264,6 +285,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
+  val rlimit = Input(new RateLimiterSettings)
 
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
@@ -311,11 +333,10 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
 
     // connect externally
     recvPath.module.io.in <> io.ext.in
-    io.ext.out <> RateLimiter(
-      sendPath.module.io.out,
-      config.limitInc, config.limitPeriod, config.limitSize)
+    io.ext.out <> sendPath.module.io.out
 
     control.module.io.macAddr := io.ext.macAddr
+    sendPath.module.io.rlimit := io.ext.rlimit
   }
 }
 
@@ -344,6 +365,10 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
 
   def connectNicLoopback(qDepth: Int = 64) {
     net.in <> Queue(net.out, qDepth)
+    net.macAddr := PlusArg("macaddr")
+    net.rlimit.inc := PlusArg("rlimit-inc", 1)
+    net.rlimit.period := PlusArg("rlimit-period", 1)
+    net.rlimit.size := PlusArg("rlimit-size", 8)
   }
 
   def connectSimNetwork(clock: Clock, reset: Bool) {

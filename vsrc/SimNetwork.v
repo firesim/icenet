@@ -14,7 +14,10 @@ import "DPI-C" function void network_tick
 );
 
 import "DPI-C" function void network_init(
-    input string devname
+    input string devname,
+    input int rlimit_gbps,
+    output byte rlimit_inc,
+    output byte rlimit_period
 );
 
 module SimNetwork(
@@ -33,10 +36,19 @@ module SimNetwork(
     output [7:0]  net_in_bits_keep,
     output        net_in_bits_last,
 
-    output [47:0] net_macAddr
+    output [47:0] net_macAddr,
+    output [7:0]  net_rlimit_inc,
+    output [7:0]  net_rlimit_period,
+    output [7:0]  net_rlimit_size
 );
 
     string devname;
+    int rlimit_gbps = 64;
+    byte rlimit_inc = 1;
+    byte rlimit_period = 1;
+    byte rlimit_size = 8;
+    int dummy;
+
     bit __out_ready;
     bit __in_valid;
     longint __in_data;
@@ -50,8 +62,11 @@ module SimNetwork(
     reg [47:0] __macaddr_reg;
 
     initial begin
+        dummy = $value$plusargs("netbw=%d", rlimit_gbps);
+        dummy = $value$plusargs("netburst=%d", rlimit_size);
+
         if ($value$plusargs("netdev=%s", devname) != 0) begin
-            network_init(devname);
+            network_init(devname, rlimit_gbps, rlimit_inc, rlimit_period);
         end
     end
 
@@ -95,5 +110,8 @@ module SimNetwork(
     assign net_in_bits_keep = 8'hff;
     assign net_in_bits_last = __in_last_reg;
     assign net_macAddr = __macaddr_reg;
+    assign net_rlimit_inc = rlimit_inc;
+    assign net_rlimit_period = rlimit_period;
+    assign net_rlimit_size = rlimit_size;
 
 endmodule
