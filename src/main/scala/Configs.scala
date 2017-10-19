@@ -12,7 +12,8 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
       Module(new CreditTrackerTest),
       Module(new BasicSwitchTestWrapper()(p)),
       Module(new BroadcastTestWrapper()(p)),
-      Module(new NetworkTapTest))
+      Module(new NetworkTapTest),
+      Module(new RateLimiterTest))
   }
 })
 

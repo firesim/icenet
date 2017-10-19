@@ -12,7 +12,11 @@ import testchipip.{StreamIO, StreamChannel, SeqQueue, TLHelper}
 import scala.util.Random
 import IceNetConsts._
 
-case class NICConfig(inBufPackets: Int = 2)
+case class NICConfig(
+  inBufPackets: Int = 2,
+  limitInc: Int = 1,
+  limitPeriod: Int = 0,
+  limitSize: Int = 2)
 
 case object NICKey extends Field[NICConfig]
 
@@ -300,12 +304,17 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
       val ext = new NICIO
     })
 
+    val config = p(NICKey)
+
     sendPath.module.io.send <> control.module.io.send
     recvPath.module.io.recv <> control.module.io.recv
 
     // connect externally
     recvPath.module.io.in <> io.ext.in
-    io.ext.out <> sendPath.module.io.out
+    io.ext.out <> RateLimiter(
+      sendPath.module.io.out,
+      config.limitInc, config.limitPeriod, config.limitSize)
+
     control.module.io.macAddr := io.ext.macAddr
   }
 }
