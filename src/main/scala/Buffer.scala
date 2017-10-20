@@ -3,6 +3,7 @@ package icenet
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
+import scala.util.Random
 import testchipip.StreamIO
 import IceNetConsts._
 
@@ -139,9 +140,12 @@ class NetworkPacketBuffer[T <: Data](
 
     when (io.stream.in.bits.last) {
       val nextPhase = wrapInc(inPhase)
-      when (!startDropping && !inDrop) {
+      val tooSmall = inIdx < (headerWords - 1).U
+      when (!startDropping && !inDrop && !tooSmall) {
         inPhase := nextPhase
         bufLenSet := true.B
+      } .otherwise {
+        printf("WARNING: dropped packet with %d flits\n", inIdx + 1.U)
       }
       inIdx := 0.U
       inDrop := false.B
@@ -149,52 +153,64 @@ class NetworkPacketBuffer[T <: Data](
   }
 }
 
-class NetworkPacketBufferTest extends UnitTest {
+class NetworkPacketBufferTest extends UnitTest(100000) {
   val buffer = Module(new NetworkPacketBuffer(2, 8, 8, UInt(64.W), 4))
 
-  val inputData = Vec(1.U, 2.U, 3.U, 4.U, 5.U, 6.U, 7.U, 8.U, 9.U)
-  val inputLast = Vec(
-    false.B, true.B, false.B, false.B, true.B,
-    false.B, true.B, false.B, true.B)
-  val expectedData = Vec(1.U, 2.U, 6.U, 7.U)
-  val expectedLast = Vec(false.B, true.B, false.B, true.B)
-  val expectedHead = Vec(Cat(2.U(32.W), 1.U(32.W)), Cat(7.U(32.W), 6.U(32.W)))
+  val rnd = new Random
+  val nPackets = 64
+  val phaseBits = log2Ceil(nPackets)
+  val packetLengths = Vec(Seq.fill(nPackets) { rnd.nextInt(8).U(3.W) })
 
-  val s_start :: s_input :: s_output :: s_done :: Nil = Enum(4)
-  val state = RegInit(s_start)
+  val inLFSR = LFSR16(buffer.io.stream.in.fire())
+  val outLFSR = LFSR16(buffer.io.stream.out.fire())
 
-  val delayDone = Counter(10).inc()
-  val (inputIdx, inputDone) = Counter(buffer.io.stream.in.fire(), inputData.size)
-  val (outputIdx, outputDone) = Counter(buffer.io.stream.out.fire(), expectedData.size)
+  val inCountdown = RegInit(0.U(8.W))
+  val outCountdown = RegInit(0.U(8.W))
 
-  when (state === s_start && io.start) { state := s_input }
-  when (inputDone) { state := s_output }
-  when (outputDone) { state := s_done }
+  val inPhase = RegInit(0.U(phaseBits.W))
 
-  buffer.io.stream.in.valid := state === s_input && delayDone
-  buffer.io.stream.in.bits.keep := ~0.U(4.W)
-  buffer.io.stream.in.bits.data := inputData(inputIdx)
-  buffer.io.stream.in.bits.last := inputLast(inputIdx)
-  buffer.io.stream.out.ready := state === s_output && delayDone
+  val inIdx = RegInit(0.U(3.W))
+  val outIdx = RegInit(0.U(3.W))
 
-  when (buffer.io.stream.out.fire()) {
-    printf("out data: %x\n", buffer.io.stream.out.bits.data)
+  val started = RegInit(false.B)
+  val sending = RegInit(false.B)
+
+  buffer.io.stream.in.valid := sending && inCountdown === 0.U
+  buffer.io.stream.in.bits.data := inIdx
+  buffer.io.stream.in.bits.keep := ~0.U(32.W)
+  buffer.io.stream.in.bits.last := inIdx === packetLengths(inPhase)
+  buffer.io.stream.out.ready := outCountdown === 0.U
+
+  when (io.start && !started) {
+    started := true.B
+    sending := true.B
   }
 
-  assert(
-    !buffer.io.stream.out.valid ||
-    buffer.io.stream.out.bits.data === expectedData(outputIdx),
-    "Data mismatch")
+  when (inCountdown > 0.U) { inCountdown := inCountdown - 1.U }
+  when (outCountdown > 0.U) { outCountdown := outCountdown - 1.U }
 
-  assert(
-    !buffer.io.stream.out.valid ||
-    buffer.io.stream.out.bits.last === expectedLast(outputIdx),
-    "Last mismatch")
+  when (buffer.io.stream.in.fire()) {
+    inCountdown := inLFSR >> 8.U
+    inIdx := inIdx + 1.U
+    when (buffer.io.stream.in.bits.last) {
+      inIdx := 0.U
+      inPhase := inPhase + 1.U
+      when (inPhase === (nPackets - 1).U) { sending := false.B }
+    }
+  }
 
-  assert(
-    !buffer.io.header.valid || outputIdx(0) ||
-    buffer.io.header.bits === expectedHead(outputIdx >> 1.U),
-    "Header mismatch")
+  when (buffer.io.stream.out.fire()) {
+    outCountdown := outLFSR >> 8.U
+    outIdx := outIdx + 1.U
+    when (buffer.io.stream.out.bits.last) {
+      outIdx := 0.U
+    }
+  }
 
-  io.finished := state === s_done
+  assert(!buffer.io.stream.out.valid || buffer.io.stream.out.bits.data === outIdx,
+    "NetworkPacketBufferTest: got output data out of order")
+  assert(!buffer.io.header.valid || buffer.io.header.bits === (1L << 32).U,
+    "NetworkPacketBufferTest: unexpected header")
+
+  io.finished := started && !sending && !buffer.io.stream.out.valid
 }
