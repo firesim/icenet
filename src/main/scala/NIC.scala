@@ -13,7 +13,7 @@ import testchipip.{StreamIO, StreamChannel, SeqQueue}
 import scala.util.Random
 import IceNetConsts._
 
-case class NICConfig(inBufPackets: Int = 2)
+case class NICConfig(inBufPackets: Int = 50)
 
 case object NICKey extends Field[NICConfig]
 
@@ -261,6 +261,14 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
 
+class NICIOvonly extends Bundle {
+  val in = Flipped(Valid(new StreamChannel(NET_IF_WIDTH)))
+  val out = Valid(new StreamChannel(NET_IF_WIDTH))
+  val macAddr = Input(UInt(ETH_MAC_BITS.W))
+
+  override def cloneType = (new NICIOvonly).asInstanceOf[this.type]
+}
+
 /* 
  * A simple NIC
  *
@@ -296,7 +304,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
     val io = IO(new Bundle {
       val tlout = dmanode.bundleOut // move packets in/out of mem
       val tlin = mmionode.bundleIn  // commands from cpu
-      val ext = new NICIO
+      val ext = new NICIOvonly
       val interrupt = intnode.bundleOut
     })
 
@@ -304,8 +312,14 @@ class IceNIC(address: BigInt, beatBytes: Int = 8, nXacts: Int = 8)
     recvPath.module.io.recv <> control.module.io.recv
 
     // connect externally
-    recvPath.module.io.in <> io.ext.in
-    io.ext.out <> sendPath.module.io.out
+    recvPath.module.io.in.bits :=  io.ext.in.bits
+    recvPath.module.io.in.valid :=  io.ext.in.valid
+    //ignore recvPath.module.io.in.ready
+
+    io.ext.out.bits := sendPath.module.io.out.bits
+    io.ext.out.valid := sendPath.module.io.out.valid
+    sendPath.module.io.out.ready := Bool(true)
+
     control.module.io.macAddr := io.ext.macAddr
   }
 }
@@ -314,7 +328,7 @@ class SimNetwork extends BlackBox {
   val io = IO(new Bundle {
     val clock = Input(Clock())
     val reset = Input(Bool())
-    val net = Flipped(new NICIO)
+    val net = Flipped(new NICIOvonly)
   })
 }
 
@@ -329,12 +343,13 @@ trait HasPeripheryIceNIC extends HasSystemBus {
 
 trait HasPeripheryIceNICModuleImp extends LazyMultiIOModuleImp {
   val outer: HasPeripheryIceNIC
-  val net = IO(new NICIO)
+  val net = IO(new NICIOvonly)
 
   net <> outer.icenic.module.io.ext
 
   def connectNicLoopback(qDepth: Int = 64) {
-    net.in <> Queue(net.out, qDepth)
+    //net.in <> Queue(net.out, qDepth)
+    println("FAIL-------------------------------------------------- connectNicLoopback not properly implemented!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1\n")
   }
 
   def connectSimNetwork(dummy: Int = 0) {
