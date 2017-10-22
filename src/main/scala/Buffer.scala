@@ -42,20 +42,23 @@ class NetworkPacketBuffer[T <: Data](
     headerType: T = new EthernetHeader,
     wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
 
-  val io = IO(new Bundle {
-    val stream = new StreamIO(wordBytes * 8)
-    val header = Valid(headerType)
-  })
-
-  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
-    "NetworkPacketBuffer does not handle missing data")
-
   val maxWords = maxBytes / wordBytes
   val headerWords = headerBytes / wordBytes
   val wordBits = wordBytes * 8
 
   val idxBits = log2Ceil(maxWords + 1)
   val phaseBits = log2Ceil(nPackets)
+
+  val io = IO(new Bundle {
+    val stream = new StreamIO(wordBytes * 8)
+    val header = Valid(headerType)
+    val length = Output(UInt(idxBits.W))
+    val count = Output(UInt(log2Ceil(nPackets+1).W))
+  })
+
+  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
+    "NetworkPacketBuffer does not handle missing data")
+
   val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, wordBits)) }
   val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(wordBits.W))) }
   val bufLengths = Seq.fill(nPackets) { RegInit(0.U(idxBits.W)) }
@@ -70,19 +73,17 @@ class NetworkPacketBuffer[T <: Data](
 
   val outHeader = Vec(headers.map(
     header => headerType.fromBits(Cat(header.reverse))))
-  val outDone = Vec(bufLengths.map(len => outIdx === len))
   val outLast = Vec(bufLengths.map(len => outIdx === (len - 1.U)))
-  val outValid = !outDone(outPhase) && bufValid(outPhase)
-
   val outValidReg = RegInit(false.B)
 
-  val ren = (io.stream.out.ready || !outValidReg) && outValid
+  val ren = (io.stream.out.ready || !outValidReg) && bufValid(outPhase)
   val wen = Wire(init = false.B)
   val hwen = wen && inIdx < headerWords.U
 
   val outPhaseReg = RegEnable(outPhase, ren)
   val outDataReg = Vec(buffers.map(buffer => buffer.io.read.data))(outPhaseReg)
   val outLastReg = RegEnable(outLast(outPhase), ren)
+  val outIdxReg = RegEnable(outIdx, ren)
 
   io.stream.out.valid := outValidReg
   io.stream.out.bits.data := outDataReg
@@ -90,6 +91,8 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := outHeader(outPhase)
+  io.length := RegEnable(Vec(bufLengths)(outPhase), ren) - outIdxReg
+  io.count := RegEnable(PopCount(bufValid), ren)
 
   when (io.stream.out.fire()) { outValidReg := false.B }
   when (ren) { outValidReg := true.B }

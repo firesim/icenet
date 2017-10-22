@@ -222,8 +222,10 @@ class IceNicWriterModule(outer: IceNicWriter)
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val length = Input(UInt(NET_LEN_BITS.W))
   })
 
+  val maxBytes = p(NICKey).maxAcquireBytes
   val (tl, edge) = outer.node.out(0)
   val beatBytes = tl.params.dataBits / 8
   val fullAddrBits = tl.params.addressBits
@@ -233,36 +235,65 @@ class IceNicWriterModule(outer: IceNicWriter)
   val s_idle :: s_data :: s_complete :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
-  val base_addr = RegInit(0.U(addrBits.W))
-  val idx = RegInit(0.U(addrBits.W))
-  val addr_merged = base_addr + idx
+  val baseAddr = Reg(UInt(addrBits.W))
+  val idx = Reg(UInt(addrBits.W))
+  val addrMerged = baseAddr + idx
 
-  val xact_busy = RegInit(0.U(outer.nXacts.W))
-  val xact_onehot = PriorityEncoderOH(~xact_busy)
-  val can_send = !xact_busy.andR
+  val xactBusy = RegInit(0.U(outer.nXacts.W))
+  val xactOnehot = PriorityEncoderOH(~xactBusy)
 
-  xact_busy := (xact_busy | Mux(tl.a.fire(), xact_onehot, 0.U)) &
+  val maxBeats = maxBytes / beatBytes
+  val beatIdBits = log2Ceil(maxBeats)
+
+  val beatsLeft = Reg(UInt(beatIdBits.W))
+  val headAddr = Reg(UInt(addrBits.W))
+  val headXact = Reg(UInt(log2Ceil(outer.nXacts).W))
+  val headSize = Reg(UInt(log2Ceil(beatIdBits + 1).W))
+
+  val newBlock = beatsLeft === 0.U
+  val canSend = !xactBusy.andR || !newBlock
+
+  val reqSize = MuxCase(0.U,
+    (log2Ceil(maxBytes / beatBytes) until 0 by -1).map(lgSize =>
+        (addrMerged(lgSize-1,0) === 0.U &&
+          (io.length >> lgSize.U) =/= 0.U) -> lgSize.U))
+
+  xactBusy := (xactBusy | Mux(tl.a.fire() && newBlock, xactOnehot, 0.U)) &
                   ~Mux(tl.d.fire(), UIntToOH(tl.d.bits.source), 0.U)
 
+  val fromSource = Mux(newBlock, OHToUInt(xactOnehot), headXact)
+  val toAddress = Mux(newBlock, addrMerged, headAddr) << byteAddrBits.U
+  val lgSize = Mux(newBlock, reqSize, headSize) +& byteAddrBits.U
+
   io.recv.req.ready := state === s_idle
-  tl.a.valid := (state === s_data && io.in.valid) && can_send
+  tl.a.valid := (state === s_data && io.in.valid) && canSend
   tl.a.bits := edge.Put(
-    fromSource = OHToUInt(xact_onehot),
-    toAddress = addr_merged << byteAddrBits.U,
-    lgSize = byteAddrBits.U,
+    fromSource = fromSource,
+    toAddress = toAddress,
+    lgSize = lgSize,
     data = io.in.bits.data)._2
-  tl.d.ready := xact_busy.orR
-  io.in.ready := state === s_data && can_send && tl.a.ready
-  io.recv.comp.valid := state === s_complete && !xact_busy.orR
+  tl.d.ready := xactBusy.orR
+  io.in.ready := state === s_data && canSend && tl.a.ready
+  io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := idx << byteAddrBits.U
 
   when (io.recv.req.fire()) {
     idx := 0.U
-    base_addr := io.recv.req.bits >> byteAddrBits.U
+    baseAddr := io.recv.req.bits >> byteAddrBits.U
+    beatsLeft := 0.U
     state := s_data
   }
 
   when (tl.a.fire()) {
+    when (newBlock) {
+      val bytesToWrite = 1.U << reqSize
+      beatsLeft := bytesToWrite - 1.U
+      headAddr := addrMerged
+      headXact := OHToUInt(xactOnehot)
+      headSize := reqSize
+    } .otherwise {
+      beatsLeft := beatsLeft - 1.U
+    }
     idx := idx + 1.U
     when (io.in.bits.last) { state := s_complete }
   }
@@ -293,6 +324,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
 
   val writer = outer.writer.module
   writer.io.in <> buffer.io.stream.out
+  writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
 }
 
