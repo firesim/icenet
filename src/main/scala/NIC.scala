@@ -377,7 +377,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
-      val ext = new NICIO
+      val ext = new NICIOvonly
     })
 
     val config = p(NICKey)
@@ -423,7 +423,9 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   net <> outer.icenic.module.io.ext
 
   def connectNicLoopback(qDepth: Int = 64) {
-    net.in <> Queue(net.out, qDepth)
+    // TODO fix properly later
+    println("ERR: top level NICIO not connected in loopback!")
+    //net.in <> Queue(net.out, qDepth)
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)
