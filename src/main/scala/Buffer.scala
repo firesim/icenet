@@ -115,9 +115,10 @@ class NetworkPacketBuffer[T <: Data](
 
     when (inPhase === i.U) {
       when (bufLenSet) { bufLen := inIdx + 1.U }
-      when (bufLenClear) { bufLen := 0.U }
-
       when (hwen) { header(inIdx) := io.stream.in.bits.data }
+    }
+    when (outPhase === i.U) {
+      when (bufLenClear) { bufLen := 0.U }
     }
   }
 
@@ -136,10 +137,8 @@ class NetworkPacketBuffer[T <: Data](
       (inIdx === maxWords.U)
 
     when (startDropping) { inDrop := true.B }
-    when (!startDropping && !inDrop) {
-      wen := true.B
-      inIdx := inIdx + 1.U
-    }
+    wen := !startDropping && !inDrop
+    when (inIdx =/= maxWords.U) { inIdx := inIdx + 1.U }
 
     when (io.stream.in.bits.last) {
       val nextPhase = wrapInc(inPhase)
@@ -157,12 +156,12 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest(100000) {
-  val buffer = Module(new NetworkPacketBuffer(2, 8, 8, UInt(64.W), 4))
+  val buffer = Module(new NetworkPacketBuffer(2, 32, 8, UInt(64.W), 4))
 
   val rnd = new Random
   val nPackets = 64
   val phaseBits = log2Ceil(nPackets)
-  val packetLengths = Vec(Seq.fill(nPackets) { rnd.nextInt(8).U(3.W) })
+  val packetLengths = Vec(Seq.fill(nPackets) { (2 + rnd.nextInt(6)).U(3.W) })
 
   val inLFSR = LFSR16(buffer.io.stream.in.fire())
   val outLFSR = LFSR16(buffer.io.stream.out.fire())
@@ -205,9 +204,7 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
   when (buffer.io.stream.out.fire()) {
     outCountdown := outLFSR >> 8.U
     outIdx := outIdx + 1.U
-    when (buffer.io.stream.out.bits.last) {
-      outIdx := 0.U
-    }
+    when (buffer.io.stream.out.bits.last) { outIdx := 0.U }
   }
 
   assert(!buffer.io.stream.out.valid || buffer.io.stream.out.bits.data === outIdx,
