@@ -60,17 +60,16 @@ void NetworkDevice::run(void)
 void NetworkDevice::tick(
             bool out_valid,
             uint64_t out_data,
-            bool out_last,
-            bool in_ready)
+            bool out_last)
 {
-    if (out_valid && out_ready()) {
+    if (out_valid) {
         struct network_flit flt;
         flt.data = out_data;
         flt.last = out_last;
         out_flits.push(flt);
     }
 
-    if (in_valid() && in_ready) {
+    if (in_valid()) {
         in_flits.pop();
     }
 }
