@@ -4,25 +4,25 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
 import scala.util.Random
-import testchipip.StreamIO
+import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
-class BufferBRAM(n: Int, w: Int) extends Module {
+class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   val addrBits = log2Ceil(n)
   val io = IO(new Bundle {
     val read = new Bundle {
       val en = Input(Bool())
       val addr = Input(UInt(addrBits.W))
-      val data = Output(Bits(w.W))
+      val data = Output(typ)
     }
     val write = new Bundle {
       val en = Input(Bool())
       val addr = Input(UInt(addrBits.W))
-      val data = Input(Bits(w.W))
+      val data = Input(typ)
     }
   })
 
-  val ram = Mem(n, Bits(w.W))
+  val ram = Mem(n, typ)
 
   val wen = RegNext(io.write.en, false.B)
   val waddr = RegNext(io.write.addr)
@@ -30,9 +30,11 @@ class BufferBRAM(n: Int, w: Int) extends Module {
 
   when (wen) { ram.write(waddr, wdata) }
 
-  val rdata = ram.read(io.read.addr)
+  val rread_data = RegEnable(ram.read(io.read.addr), io.read.en)
+  val rbypass = RegEnable(io.read.addr === waddr && wen, io.read.en)
+  val rbypass_data = RegEnable(wdata, io.read.en)
 
-  io.read.data := RegEnable(rdata, io.read.en)
+  io.read.data := Mux(rbypass, rbypass_data, rread_data)
 }
 
 class NetworkPacketBuffer[T <: Data](
@@ -59,7 +61,7 @@ class NetworkPacketBuffer[T <: Data](
   assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
     "NetworkPacketBuffer does not handle missing data")
 
-  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, wordBits)) }
+  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, Bits(wordBits.W))) }
   val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(wordBits.W))) }
   val bufLengths = Seq.fill(nPackets) { RegInit(0.U(idxBits.W)) }
   val bufValid = Vec(bufLengths.map(len => len > 0.U))
@@ -213,4 +215,95 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
     "NetworkPacketBufferTest: unexpected header")
 
   io.finished := started && !sending && !buffer.io.stream.out.valid
+}
+
+class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
+  private val xactIdBits = log2Ceil(nXacts)
+  private val countBits = log2Ceil(nWords + 1)
+
+  val id = UInt(xactIdBits.W)
+  val count = UInt(countBits.W)
+
+  override def cloneType =
+    new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
+}
+
+class ReservationBufferData(nXacts: Int) extends Bundle {
+  private val xactIdBits = log2Ceil(nXacts)
+
+  val id = UInt(xactIdBits.W)
+  val data = new StreamChannel(NET_IF_WIDTH)
+
+  override def cloneType =
+    new ReservationBufferData(nXacts).asInstanceOf[this.type]
+}
+
+class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
+  private val xactIdBits = log2Ceil(nXacts)
+  private val countBits = log2Ceil(nWords + 1)
+
+  require(nXacts <= nWords)
+
+  val io = IO(new Bundle {
+    val alloc = Flipped(Decoupled(new ReservationBufferAlloc(nXacts, nWords)))
+    val in = Flipped(Decoupled(new ReservationBufferData(nXacts)))
+    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+  })
+
+  def incWrap(cur: UInt, inc: UInt): UInt = {
+    val unwrapped = cur +& inc
+    Mux(unwrapped >= nWords.U, unwrapped - nWords.U, unwrapped)
+  }
+
+  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(NET_IF_WIDTH)))
+  val bufValid = RegInit(0.U(nWords.W))
+
+  val head = RegInit(0.U(countBits.W))
+  val tail = RegInit(0.U(countBits.W))
+  val count = RegInit(0.U(countBits.W))
+
+  val full = (count + io.alloc.bits.count) > nWords.U
+  val xactHeads = Reg(Vec(nXacts, UInt(countBits.W)))
+  val xactCounts = Reg(Vec(nXacts, UInt(countBits.W)))
+
+  val curXactHead = xactHeads(io.in.bits.id)
+  val curXactCount = xactCounts(io.in.bits.id)
+
+  val occupied = RegInit(false.B)
+  val ren = (!occupied || io.out.ready) && (bufValid >> tail)(0)
+
+  count := count +
+              Mux(io.alloc.fire(), io.alloc.bits.count, 0.U) -
+              Mux(io.out.fire(), 1.U, 0.U)
+  bufValid := (bufValid | Mux(io.in.fire(), UIntToOH(curXactHead), 0.U)) &
+                         ~Mux(ren, UIntToOH(tail), 0.U)
+
+  io.alloc.ready := !full
+  io.in.ready := true.B
+  io.out.valid := occupied
+  io.out.bits := buffer.io.read.data
+  io.out.bits.keep := NET_FULL_KEEP
+
+  buffer.io.write.en := io.in.fire()
+  buffer.io.write.addr := curXactHead
+  buffer.io.write.data := io.in.bits.data
+  buffer.io.read.en := ren
+  buffer.io.read.addr := tail
+
+  when (io.alloc.fire()) {
+    xactHeads(io.alloc.bits.id) := head
+    head := incWrap(head, io.alloc.bits.count)
+  }
+
+  when (io.in.fire()) {
+    xactHeads(io.in.bits.id) := incWrap(curXactHead, 1.U)
+    xactCounts(io.in.bits.id) := curXactCount - 1.U
+  }
+
+  when (io.out.fire()) { occupied := false.B }
+
+  when (ren) {
+    occupied := true.B
+    tail := incWrap(tail, 1.U)
+  }
 }

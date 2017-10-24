@@ -7,16 +7,18 @@ import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
-import freechips.rocketchip.util.{TwoWayCounter, PlusArg}
-import testchipip.{StreamIO, StreamChannel, SeqQueue, TLHelper}
-import scala.util.Random
+import freechips.rocketchip.unittest.{UnitTest, UnitTestIO}
+import freechips.rocketchip.util._
+import testchipip.{StreamIO, StreamChannel, TLHelper}
+import scala.math.max
 import IceNetConsts._
 
 case class NICConfig(
   inBufPackets: Int = 50,
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
-  maxAcquireBytes: Int = 64)
+  maxAcquireBytes: Int = 64,
+  ctrlQueueDepth: Int = 10)
 
 case object NICKey extends Field[NICConfig]
 
@@ -37,11 +39,12 @@ trait IceNicControllerBundle extends Bundle {
 }
 
 trait IceNicControllerModule extends HasRegMap {
+  implicit val p: Parameters
   val io: IceNicControllerBundle
 
   val sendCompDown = Wire(init = false.B)
 
-  val qDepth = 10
+  val qDepth = p(NICKey).ctrlQueueDepth
   // hold (len, addr) of packets that we need to send out
   val sendReqQueue = Module(new Queue(UInt(NET_IF_WIDTH.W), qDepth))
   // hold addr of buffers we can write received packets into
@@ -109,8 +112,12 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
 
     reader.module.io.send <> io.send
 
+    val queue = Module(new ReservationBuffer(config.nMemXacts, config.outBufFlits))
+    queue.io.alloc <> reader.module.io.alloc
+    queue.io.in <> reader.module.io.out
+
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
-    limiter.io.in <> SeqQueue(reader.module.io.out, config.outBufFlits)
+    limiter.io.in <> queue.io.out
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
   }
@@ -122,16 +129,22 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
 class IceNicReader(implicit p: Parameters)
     extends LazyModule {
   val node = TLHelper.makeClientNode(
-    name = "ice-nic-send", sourceId = IdRange(0, 1))
+    name = "ice-nic-send", sourceId = IdRange(0, p(NICKey).nMemXacts))
   lazy val module = new IceNicReaderModule(this)
 }
 
 class IceNicReaderModule(outer: IceNicReader)
     extends LazyModuleImp(outer) {
 
+  val config = p(NICKey)
+  val maxBytes = config.maxAcquireBytes
+  val nXacts = config.nMemXacts
+  val outFlits = config.outBufFlits
+
   val io = IO(new Bundle {
     val send = Flipped(new IceNicSendIO)
-    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
+    val out = Decoupled(new ReservationBufferData(nXacts))
   })
 
   val (tl, edge) = outer.node.out(0)
@@ -143,10 +156,9 @@ class IceNicReaderModule(outer: IceNicReader)
   val packpart = io.send.req.bits(NET_IF_WIDTH - 1)
   val packlen = io.send.req.bits(NET_IF_WIDTH - 2, midPoint)
   val packaddr = io.send.req.bits(midPoint - 1, 0)
-  val maxBytes = p(NICKey).maxAcquireBytes
 
   // we allow one TL request at a time to avoid tracking
-  val s_idle :: s_read :: s_send :: s_comp :: Nil = Enum(4)
+  val s_idle :: s_read :: s_comp :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
   // Physical (word) address in memory
@@ -156,7 +168,10 @@ class IceNicReaderModule(outer: IceNicReader)
   // 0 if last packet in sequence, 1 otherwise
   val sendpart = Reg(Bool())
 
-  val grantqueue = Queue(tl.d, 1)
+  val xactBusy = RegInit(0.U(nXacts.W))
+  val xactOnehot = PriorityEncoderOH(~xactBusy)
+  val xactId = OHToUInt(xactOnehot)
+  val lastXact = Reg(UInt(log2Ceil(nXacts).W))
 
   val reqSize = MuxCase(byteAddrBits.U,
     (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
@@ -164,20 +179,31 @@ class IceNicReaderModule(outer: IceNicReader)
         // s.t. sendaddr % size == 0 and sendlen > size
         (sendaddr(lgSize-1,0) === 0.U &&
           (sendlen >> lgSize.U) =/= 0.U) -> lgSize.U))
-  val beatsLeft = Reg(UInt(log2Ceil(maxBytes / beatBytes).W))
+  val isLast = sendlen === 0.U && tl.d.bits.source === lastXact && edge.last(tl.d)
+  val canSend = state === s_read && !xactBusy.andR
+
+  xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
+                  ~Mux(tl.d.fire() && edge.last(tl.d),
+                        UIntToOH(tl.d.bits.source), 0.U)
+
+  val helper = DecoupledHelper(tl.a.ready, io.alloc.ready)
 
   io.send.req.ready := state === s_idle
-  tl.a.valid := state === s_read
+  io.alloc.valid := helper.fire(io.alloc.ready, canSend)
+  io.alloc.bits.id := xactId
+  io.alloc.bits.count := (1.U << (reqSize - byteAddrBits.U))
+  tl.a.valid := helper.fire(tl.a.ready, canSend)
   tl.a.bits := edge.Get(
-    fromSource = 0.U,
+    fromSource = xactId,
     toAddress = sendaddr,
     lgSize = reqSize)._2
-  io.out.valid := grantqueue.valid && state === s_send
-  io.out.bits.data := grantqueue.bits.data
-  io.out.bits.keep := ~0.U(beatBytes.W)
-  io.out.bits.last := sendlen === 0.U && beatsLeft === 0.U && !sendpart
-  grantqueue.ready := io.out.ready && state === s_send
-  io.send.comp.valid := state === s_comp
+
+  io.out.valid := tl.d.valid
+  io.out.bits.id := tl.d.bits.source
+  io.out.bits.data.data := tl.d.bits.data
+  io.out.bits.data.last := isLast && !sendpart
+  tl.d.ready := io.out.ready
+  io.send.comp.valid := state === s_comp && !xactBusy.orR
   io.send.comp.bits := true.B
 
   when (io.send.req.fire()) {
@@ -195,14 +221,10 @@ class IceNicReaderModule(outer: IceNicReader)
     val reqBytes = 1.U << reqSize
     sendaddr := sendaddr + reqBytes
     sendlen  := sendlen - reqBytes
-    beatsLeft := (reqBytes >> byteAddrBits.U) - 1.U
-    state := s_send
-  }
-
-  when (io.out.fire()) {
-    when (beatsLeft === 0.U) {
-      state := Mux(sendlen === 0.U, s_comp, s_read)
-    } .otherwise { beatsLeft := beatsLeft - 1.U }
+    when (sendlen === reqBytes) {
+      lastXact := xactId
+      state := s_comp
+    }
   }
 
   when (io.send.comp.fire()) {
@@ -440,3 +462,268 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   }
 }
 
+class IceNicTestSendDriver(
+    sendReqs: Seq[(Int, Int, Boolean)],
+    sendData: Seq[Long])(implicit p: Parameters) extends LazyModule {
+  val node = TLHelper.makeClientNode(
+    name = "test-send-driver", sourceId = IdRange(0, 1))
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle with UnitTestIO {
+      val send = new IceNicSendIO
+    })
+
+    val (tl, edge) = node.out(0)
+    val dataBits = tl.params.dataBits
+    val beatBytes = dataBits / 8
+    val byteAddrBits = log2Ceil(beatBytes)
+    val lenBits = NET_LEN_BITS - 1
+    val addrBits = NET_IF_WIDTH - NET_LEN_BITS
+
+    val (s_start :: s_write_req :: s_write_resp ::
+         s_send :: s_done :: Nil) = Enum(5)
+    val state = RegInit(s_start)
+
+    val sendReqVec = Vec(sendReqs.map {
+      case (addr, len, part) => Cat(part.B, len.U(lenBits.W), addr.U(addrBits.W))})
+
+    val sendReqAddrVec = Vec(sendReqs.map{case (addr, _, _) => addr.U(addrBits.W)})
+    val sendReqCounts = sendReqs.map { case (_, len, _) => len / beatBytes }
+    val sendReqCountVec = Vec(sendReqCounts.map(_.U))
+    val sendReqBase = Vec((0 +: (1 until sendReqs.size).map(
+      i => sendReqCounts.slice(0, i).reduce(_ + _))).map(_.U(addrBits.W)))
+    val maxMemCount = sendReqCounts.reduce(max(_, _))
+    val totalMemCount = sendReqCounts.reduce(_ + _)
+
+    require(totalMemCount == sendData.size)
+
+    val sendDataVec = Vec(sendData.map(_.U(dataBits.W)))
+
+    val reqIdx = Reg(UInt(log2Ceil(sendReqs.size).W))
+    val memIdx = Reg(UInt(log2Ceil(totalMemCount).W))
+
+    val outSend = TwoWayCounter(
+      io.send.req.fire(), io.send.comp.fire(), sendReqs.size)
+
+    val writeAddr = sendReqAddrVec(reqIdx) + (memIdx << byteAddrBits.U)
+    val writeData = sendDataVec(sendReqBase(reqIdx) + memIdx)
+
+    tl.a.valid := state === s_write_req
+    tl.a.bits := edge.Put(
+      fromSource = 0.U,
+      toAddress = writeAddr,
+      lgSize = byteAddrBits.U,
+      data = writeData)._2
+    tl.d.ready := state === s_write_resp
+
+    io.send.req.valid := state === s_send
+    io.send.req.bits := sendReqVec(reqIdx)
+    io.send.comp.ready := outSend =/= 0.U
+
+    io.finished := state === s_done && outSend === 0.U
+
+    when (state === s_start && io.start) {
+      reqIdx := 0.U
+      memIdx := 0.U
+      state := s_write_req
+    }
+
+    when (tl.a.fire()) { state := s_write_resp }
+
+    when (tl.d.fire()) {
+      memIdx := memIdx + 1.U
+      state := s_write_req
+
+      when (memIdx === (sendReqCountVec(reqIdx) - 1.U)) {
+        memIdx := 0.U
+        reqIdx := reqIdx + 1.U
+        when (reqIdx === (sendReqs.size - 1).U) {
+          reqIdx := 0.U
+          state := s_send
+        }
+      }
+    }
+
+    when (io.send.req.fire()) {
+      reqIdx := reqIdx + 1.U
+      when (reqIdx === (sendReqs.size - 1).U) {
+        reqIdx := 0.U
+        state := s_done
+      }
+    }
+  }
+}
+
+class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[Long])
+    (implicit p: Parameters) extends LazyModule {
+
+  val node = TLHelper.makeClientNode(
+    name = "test-recv-driver", sourceId = IdRange(0, 1))
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle with UnitTestIO {
+      val recv = new IceNicRecvIO
+    })
+
+    val (tl, edge) = node.out(0)
+    val dataBits = tl.params.dataBits
+    val beatBytes = dataBits / 8
+    val byteAddrBits = log2Ceil(beatBytes)
+
+    val (s_start :: s_recv :: s_wait ::
+         s_check_req :: s_check_resp :: s_done :: Nil) = Enum(6)
+    val state = RegInit(s_start)
+
+    val recvReqVec = Vec(recvReqs.map(_.U(NET_IF_WIDTH.W)))
+    val recvDataVec = Vec(recvData.map(_.U(dataBits.W)))
+
+    val reqIdx = Reg(UInt(log2Ceil(recvReqs.size).W))
+    val memIdx = Reg(UInt(log2Ceil(recvData.size).W))
+
+    val outRecv = TwoWayCounter(
+      io.recv.req.fire(), io.recv.comp.fire(), recvReqVec.size)
+
+    tl.a.valid := state === s_check_req
+    tl.a.bits := edge.Get(
+      fromSource = 0.U,
+      toAddress = recvReqVec.head + (memIdx << byteAddrBits.U),
+      lgSize = byteAddrBits.U)._2
+    tl.d.ready := state === s_check_resp
+
+    io.recv.req.valid := state === s_recv
+    io.recv.req.bits := recvReqVec(reqIdx)
+    io.recv.comp.ready := outRecv =/= 0.U
+
+    io.finished := state === s_done
+
+    when (state === s_start && io.start) {
+      reqIdx := 0.U
+      memIdx := 0.U
+      state := s_recv
+    }
+
+    when (io.recv.req.fire()) {
+      reqIdx := reqIdx + 1.U
+      when (reqIdx === (recvReqVec.size - 1).U) {
+        reqIdx := 0.U
+        state := s_wait
+      }
+    }
+
+    when (state === s_wait && outRecv === 0.U) {
+      state := s_check_req
+    }
+
+    when (state === s_check_req && tl.a.ready) {
+      state := s_check_resp
+    }
+
+    when (state === s_check_resp && tl.d.valid) {
+      memIdx := memIdx + 1.U
+      state := s_check_req
+      when (memIdx === (recvData.size - 1).U) {
+        memIdx := 0.U
+        state := s_done
+      }
+    }
+
+    assert(!tl.d.valid || tl.d.bits.data === recvDataVec(memIdx),
+      "IceNicTest: Received wrong data")
+  }
+}
+
+class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
+  val recvReqs = Seq(0, 1440, 1456)
+  // The 90-flit packet should be dropped
+  val recvLens = Seq(180, 2, 90, 8)
+  val testData = Seq.tabulate(280) { i => (i << 4).toLong }
+  val recvData = testData.take(182) ++ testData.drop(272)
+
+  val recvDriver = LazyModule(new IceNicTestRecvDriver(recvReqs, recvData))
+  val recvPath = LazyModule(new IceNicRecvPath)
+  val xbar = LazyModule(new TLXbar)
+  val mem = LazyModule(new TLRAM(
+    AddressSet(0, 0x7ff), beatBytes = NET_IF_BYTES))
+
+  val MEM_LATENCY = 32
+  val RLIMIT_INC = 1
+  val RLIMIT_PERIOD = 4
+  val RLIMIT_SIZE = 8
+
+  xbar.node := recvDriver.node
+  xbar.node := recvPath.node
+  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes)(
+    TLBufferChain(MEM_LATENCY)(xbar.node))
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle with UnitTestIO)
+
+    val gen = Module(new PacketGen(recvLens, testData))
+    gen.io.start := io.start
+    recvDriver.module.io.start := io.start
+    recvPath.module.io.recv <> recvDriver.module.io.recv
+    recvPath.module.io.in <> RateLimiter(
+      gen.io.out, RLIMIT_INC, RLIMIT_PERIOD, RLIMIT_SIZE)
+    io.finished := recvDriver.module.io.finished
+  }
+}
+
+class IceNicRecvTestWrapper(implicit p: Parameters) extends UnitTest(20000) {
+  val test = Module(LazyModule(new IceNicRecvTest).module)
+  test.io.start := io.start
+  io.finished := test.io.finished
+}
+
+class IceNicTest(implicit p: Parameters) extends LazyModule {
+  val sendReqs = Seq(
+    (0, 128, true),
+    (144, 160, false),
+    (320, 64, false))
+  val recvReqs = Seq(256, 544)
+  val testData = Seq.tabulate(44)(i => (i << 4).toLong)
+
+  val sendDriver = LazyModule(new IceNicTestSendDriver(sendReqs, testData))
+  val recvDriver = LazyModule(new IceNicTestRecvDriver(recvReqs, testData))
+  val sendPath = LazyModule(new IceNicSendPath)
+  val recvPath = LazyModule(new IceNicRecvPath)
+  val xbar = LazyModule(new TLXbar)
+  val mem = LazyModule(new TLRAM(
+    AddressSet(0, 0x1ff), beatBytes = NET_IF_BYTES))
+
+  val NET_LATENCY = 64
+  val MEM_LATENCY = 32
+  val RLIMIT_INC = 1
+  val RLIMIT_PERIOD = 1
+  val RLIMIT_SIZE = 8
+
+  xbar.node := sendDriver.node
+  xbar.node := recvDriver.node
+  xbar.node := sendPath.node
+  xbar.node := recvPath.node
+  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes)(
+    TLBufferChain(MEM_LATENCY)(xbar.node))
+
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle with UnitTestIO)
+
+    sendPath.module.io.send <> sendDriver.module.io.send
+    recvPath.module.io.recv <> recvDriver.module.io.recv
+
+    sendPath.module.io.rlimit.inc := RLIMIT_INC.U
+    sendPath.module.io.rlimit.period := RLIMIT_PERIOD.U
+    sendPath.module.io.rlimit.size := RLIMIT_SIZE.U
+
+    recvPath.module.io.in <> LatencyPipe(sendPath.module.io.out, NET_LATENCY)
+
+    sendDriver.module.io.start := io.start
+    recvDriver.module.io.start := io.start
+    io.finished := sendDriver.module.io.finished && recvDriver.module.io.finished
+  }
+}
+
+class IceNicTestWrapper(implicit p: Parameters) extends UnitTest(50000) {
+  val test = Module(LazyModule(new IceNicTest).module)
+  test.io.start := io.start
+  io.finished := test.io.finished
+}
