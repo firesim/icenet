@@ -15,38 +15,9 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 
-static int tuntap_alloc(const char *dev, int flags)
-{
-	struct ifreq ifr;
-	int fd, err;
-
-	if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
-		perror("open()");
-		return fd;
-	}
-
-	memset(&ifr, 0, sizeof(ifr));
-
-	ifr.ifr_flags = flags;
-	strncpy(ifr.ifr_name, dev, IFNAMSIZ);
-
-	if ((err = ioctl(fd, TUNSETIFF, &ifr)) < 0) {
-		perror("ioctl()");
-		close(fd);
-		return err;
-	}
-
-	return fd;
-}
-
 NetworkSwitch::NetworkSwitch(const char *ifname)
 {
-    fd = tuntap_alloc(ifname, IFF_TAP | IFF_NO_PI);
-    if (fd < 0) {
-        fprintf(stderr, "Could not open tap interface\n");
-        abort();
-    }
-
+    printf("networkswitch constructor\n");
     main = context_t::current();
     worker.init(worker_thread, this);
 }
@@ -78,6 +49,7 @@ void NetworkSwitch::run(void)
 
     FD_ZERO(&rfds);
     FD_ZERO(&wfds);
+    printf("networkswitch run\n");
 
     while (true) {
         FD_SET(fd, &rfds);

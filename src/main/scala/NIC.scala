@@ -72,15 +72,15 @@ trait IceNicControllerModule extends HasRegMap {
   }
 
   regmap(
-    0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
-    0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
-    0x10 -> Seq(RegField.r(1, sendCompRead)),
-    0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
+    0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),  // Send req queue
+    0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),  // Recv req queue
+    0x10 -> Seq(RegField.r(1, sendCompRead)),                    // Send comp queue
+    0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)), // Recv comp queue
     0x14 -> Seq(
-      RegField.r(4, qDepth.U - sendReqQueue.io.count),
-      RegField.r(4, qDepth.U - recvReqQueue.io.count),
-      RegField.r(4, sendCompCount),
-      RegField.r(4, recvCompQueue.io.count)),
+      RegField.r(4, qDepth.U - sendReqQueue.io.count),           // Send req queue space
+      RegField.r(4, qDepth.U - recvReqQueue.io.count),           // Recv req queue space
+      RegField.r(4, sendCompCount),                              // Send comp queue count
+      RegField.r(4, recvCompQueue.io.count)),                    // Recv comp queue count
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)))
 }
 
@@ -339,7 +339,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     extends LazyModuleImp(outer) {
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
-    val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
+    val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream
   })
 
   val config = p(NICKey)
@@ -359,18 +359,18 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
 
-/* 
+/*
  * A simple NIC
  *
- * Expects ethernet frames (see below), but uses a custom transport 
+ * Expects ethernet frames (see below), but uses a custom transport
  * (see ExtBundle)
- * 
+ *
  * Ethernet Frame format:
  *   8 bytes    |  6 bytes  |  6 bytes    | 2 bytes  | 46-1500B | 4 bytes
  * Preamble/SFD | Dest Addr | Source Addr | Type/Len | Data     | CRC
  * Gen by NIC   | ------------- from/to CPU --------------------| Gen by NIC
  *
- * For now, we elide the Gen by NIC components since we're talking to a 
+ * For now, we elide the Gen by NIC components since we're talking to a
  * custom network.
  */
 class IceNIC(address: BigInt, beatBytes: Int = 8)

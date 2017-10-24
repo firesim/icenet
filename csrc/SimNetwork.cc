@@ -29,10 +29,11 @@ extern "C" void network_init(
     *rlimit_inc = inc / gcd;
     *rlimit_period = (period / gcd) - 1;
 
-    netsw = new NetworkSwitch(devname);
+    //netsw = new NetworkSwitch(devname);
     netdev = new NetworkDevice(random_macaddr());
+    printf("network_init\n");
 
-    netsw->add_device(netdev);
+    //netsw->add_device(netdev);
 }
 
 extern "C" void network_tick(
@@ -48,7 +49,8 @@ extern "C" void network_tick(
 
         long long     *macaddr)
 {
-    if (!netdev || !netsw) {
+    //if (!netdev || !netsw) {
+    if (!netdev) {
         *out_ready = 0;
         *in_valid = 0;
         *in_data = 0;
@@ -59,8 +61,12 @@ extern "C" void network_tick(
     netdev->tick(out_valid, out_data, out_last, in_ready);
     netdev->switch_to_host();
 
-    netsw->distribute();
-    netsw->switch_to_worker();
+    //netsw->distribute();
+    //netsw->switch_to_worker();
+    if (netdev->has_out_packet()) {
+      network_packet *p = netdev->pop_out_packet();
+      printf("packet going out, len=%d\n", p->len);
+    }
 
     *out_ready = netdev->out_ready();
     *in_valid = netdev->in_valid();
