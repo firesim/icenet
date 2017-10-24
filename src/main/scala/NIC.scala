@@ -16,7 +16,8 @@ case class NICConfig(
   inBufPackets: Int = 2,
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
-  maxAcquireBytes: Int = 64)
+  maxAcquireBytes: Int = 64,
+  ctrlQueueDepth: Int = 10)
 
 case object NICKey extends Field[NICConfig]
 
@@ -37,11 +38,12 @@ trait IceNicControllerBundle extends Bundle {
 }
 
 trait IceNicControllerModule extends HasRegMap {
+  implicit val p: Parameters
   val io: IceNicControllerBundle
 
   val sendCompDown = Wire(init = false.B)
 
-  val qDepth = 10
+  val qDepth = p(NICKey).ctrlQueueDepth
   // hold (len, addr) of packets that we need to send out
   val sendReqQueue = Module(new Queue(UInt(NET_IF_WIDTH.W), qDepth))
   // hold addr of buffers we can write received packets into
