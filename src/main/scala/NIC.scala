@@ -8,8 +8,8 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.unittest.{UnitTest, UnitTestIO}
-import freechips.rocketchip.util.{TwoWayCounter, PlusArg, UIntIsOneOf, LatencyPipe}
-import testchipip.{StreamIO, StreamChannel, SeqQueue, TLHelper}
+import freechips.rocketchip.util.{TwoWayCounter, PlusArg, UIntIsOneOf, LatencyPipe, HellaQueue}
+import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.math.max
 import IceNetConsts._
 
@@ -113,7 +113,7 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
     reader.module.io.send <> io.send
 
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
-    limiter.io.in <> SeqQueue(reader.module.io.out, config.outBufFlits)
+    limiter.io.in <> HellaQueue(reader.module.io.out, config.outBufFlits)
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
   }
