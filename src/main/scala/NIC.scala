@@ -8,7 +8,7 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.unittest.{UnitTest, UnitTestIO}
-import freechips.rocketchip.util.{TwoWayCounter, PlusArg, UIntIsOneOf, LatencyPipe, HellaQueue}
+import freechips.rocketchip.util._
 import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.math.max
 import IceNetConsts._
@@ -112,8 +112,12 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
 
     reader.module.io.send <> io.send
 
+    val queue = Module(new ReservationBuffer(config.nMemXacts, config.outBufFlits))
+    queue.io.alloc <> reader.module.io.alloc
+    queue.io.in <> reader.module.io.out
+
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
-    limiter.io.in <> HellaQueue(reader.module.io.out, config.outBufFlits)
+    limiter.io.in <> queue.io.out
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
   }
@@ -125,16 +129,22 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
 class IceNicReader(implicit p: Parameters)
     extends LazyModule {
   val node = TLHelper.makeClientNode(
-    name = "ice-nic-send", sourceId = IdRange(0, 1))
+    name = "ice-nic-send", sourceId = IdRange(0, p(NICKey).nMemXacts))
   lazy val module = new IceNicReaderModule(this)
 }
 
 class IceNicReaderModule(outer: IceNicReader)
     extends LazyModuleImp(outer) {
 
+  val config = p(NICKey)
+  val maxBytes = config.maxAcquireBytes
+  val nXacts = config.nMemXacts
+  val outFlits = config.outBufFlits
+
   val io = IO(new Bundle {
     val send = Flipped(new IceNicSendIO)
-    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
+    val out = Decoupled(new ReservationBufferData(nXacts))
   })
 
   val (tl, edge) = outer.node.out(0)
@@ -146,10 +156,9 @@ class IceNicReaderModule(outer: IceNicReader)
   val packpart = io.send.req.bits(NET_IF_WIDTH - 1)
   val packlen = io.send.req.bits(NET_IF_WIDTH - 2, midPoint)
   val packaddr = io.send.req.bits(midPoint - 1, 0)
-  val maxBytes = p(NICKey).maxAcquireBytes
 
   // we allow one TL request at a time to avoid tracking
-  val s_idle :: s_read :: s_send :: s_comp :: Nil = Enum(4)
+  val s_idle :: s_read :: s_comp :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
   // Physical (word) address in memory
@@ -159,7 +168,10 @@ class IceNicReaderModule(outer: IceNicReader)
   // 0 if last packet in sequence, 1 otherwise
   val sendpart = Reg(Bool())
 
-  val grantqueue = Queue(tl.d, 1)
+  val xactBusy = RegInit(0.U(nXacts.W))
+  val xactOnehot = PriorityEncoderOH(~xactBusy)
+  val xactId = OHToUInt(xactOnehot)
+  val lastXact = Reg(UInt(log2Ceil(nXacts).W))
 
   val reqSize = MuxCase(byteAddrBits.U,
     (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
@@ -167,20 +179,31 @@ class IceNicReaderModule(outer: IceNicReader)
         // s.t. sendaddr % size == 0 and sendlen > size
         (sendaddr(lgSize-1,0) === 0.U &&
           (sendlen >> lgSize.U) =/= 0.U) -> lgSize.U))
-  val beatsLeft = Reg(UInt(log2Ceil(maxBytes / beatBytes).W))
+  val isLast = sendlen === 0.U && tl.d.bits.source === lastXact && edge.last(tl.d)
+  val canSend = state === s_read && !xactBusy.andR
+
+  xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
+                  ~Mux(tl.d.fire() && edge.last(tl.d),
+                        UIntToOH(tl.d.bits.source), 0.U)
+
+  val helper = DecoupledHelper(tl.a.ready, io.alloc.ready)
 
   io.send.req.ready := state === s_idle
-  tl.a.valid := state === s_read
+  io.alloc.valid := helper.fire(io.alloc.ready, canSend)
+  io.alloc.bits.id := xactId
+  io.alloc.bits.count := (1.U << (reqSize - byteAddrBits.U))
+  tl.a.valid := helper.fire(tl.a.ready, canSend)
   tl.a.bits := edge.Get(
-    fromSource = 0.U,
+    fromSource = xactId,
     toAddress = sendaddr,
     lgSize = reqSize)._2
-  io.out.valid := grantqueue.valid && state === s_send
-  io.out.bits.data := grantqueue.bits.data
-  io.out.bits.keep := ~0.U(beatBytes.W)
-  io.out.bits.last := sendlen === 0.U && beatsLeft === 0.U && !sendpart
-  grantqueue.ready := io.out.ready && state === s_send
-  io.send.comp.valid := state === s_comp
+
+  io.out.valid := tl.d.valid
+  io.out.bits.id := tl.d.bits.source
+  io.out.bits.data.data := tl.d.bits.data
+  io.out.bits.data.last := isLast && !sendpart
+  tl.d.ready := io.out.ready
+  io.send.comp.valid := state === s_comp && !xactBusy.orR
   io.send.comp.bits := true.B
 
   when (io.send.req.fire()) {
@@ -198,14 +221,10 @@ class IceNicReaderModule(outer: IceNicReader)
     val reqBytes = 1.U << reqSize
     sendaddr := sendaddr + reqBytes
     sendlen  := sendlen - reqBytes
-    beatsLeft := (reqBytes >> byteAddrBits.U) - 1.U
-    state := s_send
-  }
-
-  when (io.out.fire()) {
-    when (beatsLeft === 0.U) {
-      state := Mux(sendlen === 0.U, s_comp, s_read)
-    } .otherwise { beatsLeft := beatsLeft - 1.U }
+    when (sendlen === reqBytes) {
+      lastXact := xactId
+      state := s_comp
+    }
   }
 
   when (io.send.comp.fire()) {
