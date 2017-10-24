@@ -15,6 +15,7 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
       Module(new BroadcastTestWrapper()(p)),
       Module(new NetworkTapTest),
       Module(new RateLimiterTest),
+      Module(new IceNicRecvTestWrapper()(p)),
       Module(new IceNicTestWrapper()(p)))
   }
 })

@@ -597,6 +597,48 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[Long])
   }
 }
 
+class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
+  val recvReqs = Seq(0, 1440, 1456)
+  // The 90-flit packet should be dropped
+  val recvLens = Seq(180, 2, 90, 8)
+  val testData = Seq.tabulate(280) { i => (i << 4).toLong }
+  val recvData = testData.take(182) ++ testData.drop(272)
+
+  val recvDriver = LazyModule(new IceNicTestRecvDriver(recvReqs, recvData))
+  val recvPath = LazyModule(new IceNicRecvPath)
+  val xbar = LazyModule(new TLXbar)
+  val mem = LazyModule(new TLRAM(
+    AddressSet(0, 0x7ff), beatBytes = NET_IF_BYTES))
+
+  val MEM_LATENCY = 32
+  val RLIMIT_INC = 1
+  val RLIMIT_PERIOD = 4
+  val RLIMIT_SIZE = 8
+
+  xbar.node := recvDriver.node
+  xbar.node := recvPath.node
+  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes)(
+    TLBufferChain(MEM_LATENCY)(xbar.node))
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle with UnitTestIO)
+
+    val gen = Module(new PacketGen(recvLens, testData))
+    gen.io.start := io.start
+    recvDriver.module.io.start := io.start
+    recvPath.module.io.recv <> recvDriver.module.io.recv
+    recvPath.module.io.in <> RateLimiter(
+      gen.io.out, RLIMIT_INC, RLIMIT_PERIOD, RLIMIT_SIZE)
+    io.finished := recvDriver.module.io.finished
+  }
+}
+
+class IceNicRecvTestWrapper(implicit p: Parameters) extends UnitTest(20000) {
+  val test = Module(LazyModule(new IceNicRecvTest).module)
+  test.io.start := io.start
+  io.finished := test.io.finished
+}
+
 class IceNicTest(implicit p: Parameters) extends LazyModule {
   val sendReqs = Seq(
     (0, 128, true),
