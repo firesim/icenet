@@ -444,10 +444,8 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
 
   net <> outer.icenic.module.io.ext
 
-  def connectNicLoopback(qDepth: Int = 64) {
-    // TODO fix properly later
-    println("ERR: top level NICIO not connected in loopback!")
-    //net.in <> Queue(net.out, qDepth)
+  def connectNicLoopback(dummy: Int = 0) {
+    net.in <> net.out
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)
