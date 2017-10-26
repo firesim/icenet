@@ -171,7 +171,7 @@ class IceNicReaderModule(outer: IceNicReader)
   val xactBusy = RegInit(0.U(nXacts.W))
   val xactOnehot = PriorityEncoderOH(~xactBusy)
   val xactId = OHToUInt(xactOnehot)
-  val lastXact = Reg(UInt(log2Ceil(nXacts).W))
+  val xactLast = RegInit(0.U(nXacts.W))
 
   val reqSize = MuxCase(byteAddrBits.U,
     (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
@@ -179,7 +179,7 @@ class IceNicReaderModule(outer: IceNicReader)
         // s.t. sendaddr % size == 0 and sendlen > size
         (sendaddr(lgSize-1,0) === 0.U &&
           (sendlen >> lgSize.U) =/= 0.U) -> lgSize.U))
-  val isLast = sendlen === 0.U && tl.d.bits.source === lastXact && edge.last(tl.d)
+  val isLast = (xactLast >> tl.d.bits.source)(0) && edge.last(tl.d)
   val canSend = state === s_read && !xactBusy.andR
 
   xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
@@ -201,9 +201,9 @@ class IceNicReaderModule(outer: IceNicReader)
   io.out.valid := tl.d.valid
   io.out.bits.id := tl.d.bits.source
   io.out.bits.data.data := tl.d.bits.data
-  io.out.bits.data.last := isLast && !sendpart
+  io.out.bits.data.last := isLast
   tl.d.ready := io.out.ready
-  io.send.comp.valid := state === s_comp && !xactBusy.orR
+  io.send.comp.valid := state === s_comp
   io.send.comp.bits := true.B
 
   when (io.send.req.fire()) {
@@ -222,8 +222,10 @@ class IceNicReaderModule(outer: IceNicReader)
     sendaddr := sendaddr + reqBytes
     sendlen  := sendlen - reqBytes
     when (sendlen === reqBytes) {
-      lastXact := xactId
+      xactLast := xactLast | Mux(sendpart, 0.U, xactOnehot)
       state := s_comp
+    } .otherwise {
+      xactLast := xactLast & ~xactOnehot
     }
   }
 
