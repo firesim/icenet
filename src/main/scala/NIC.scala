@@ -677,7 +677,7 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
   val NET_LATENCY = 64
   val MEM_LATENCY = 32
   val RLIMIT_INC = 1
-  val RLIMIT_PERIOD = 1
+  val RLIMIT_PERIOD = 0
   val RLIMIT_SIZE = 8
 
   xbar.node := sendDriver.node
@@ -703,6 +703,28 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
     sendDriver.module.io.start := io.start
     recvDriver.module.io.start := io.start
     io.finished := sendDriver.module.io.finished && recvDriver.module.io.finished
+
+    val count_start :: count_up :: count_print :: count_done :: Nil = Enum(4)
+    val count_state = RegInit(count_start)
+    val cycle_count = Reg(UInt(64.W))
+    val recv_count = Reg(UInt(1.W))
+
+    when (count_state === count_start && sendPath.module.io.send.req.fire()) {
+      count_state := count_up
+      cycle_count := 0.U
+      recv_count := 1.U
+    }
+    when (count_state === count_up) {
+      cycle_count := cycle_count + 1.U
+      when (recvPath.module.io.recv.comp.fire()) {
+        recv_count := recv_count - 1.U
+        when (recv_count === 0.U) { count_state := count_print }
+      }
+    }
+    when (count_state === count_print) {
+      printf("NIC test completed in %d cycles\n", cycle_count)
+      count_state := count_done
+    }
   }
 }
 
