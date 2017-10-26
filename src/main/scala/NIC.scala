@@ -171,7 +171,7 @@ class IceNicReaderModule(outer: IceNicReader)
   val xactBusy = RegInit(0.U(nXacts.W))
   val xactOnehot = PriorityEncoderOH(~xactBusy)
   val xactId = OHToUInt(xactOnehot)
-  val lastXact = Reg(UInt(log2Ceil(nXacts).W))
+  val xactLast = RegInit(0.U(nXacts.W))
 
   val reqSize = MuxCase(byteAddrBits.U,
     (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
@@ -179,7 +179,7 @@ class IceNicReaderModule(outer: IceNicReader)
         // s.t. sendaddr % size == 0 and sendlen > size
         (sendaddr(lgSize-1,0) === 0.U &&
           (sendlen >> lgSize.U) =/= 0.U) -> lgSize.U))
-  val isLast = sendlen === 0.U && tl.d.bits.source === lastXact && edge.last(tl.d)
+  val isLast = (xactLast >> tl.d.bits.source)(0) && edge.last(tl.d)
   val canSend = state === s_read && !xactBusy.andR
 
   xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
@@ -201,9 +201,9 @@ class IceNicReaderModule(outer: IceNicReader)
   io.out.valid := tl.d.valid
   io.out.bits.id := tl.d.bits.source
   io.out.bits.data.data := tl.d.bits.data
-  io.out.bits.data.last := isLast && !sendpart
+  io.out.bits.data.last := isLast
   tl.d.ready := io.out.ready
-  io.send.comp.valid := state === s_comp && !xactBusy.orR
+  io.send.comp.valid := state === s_comp
   io.send.comp.bits := true.B
 
   when (io.send.req.fire()) {
@@ -222,8 +222,10 @@ class IceNicReaderModule(outer: IceNicReader)
     sendaddr := sendaddr + reqBytes
     sendlen  := sendlen - reqBytes
     when (sendlen === reqBytes) {
-      lastXact := xactId
+      xactLast := xactLast | Mux(sendpart, 0.U, xactOnehot)
       state := s_comp
+    } .otherwise {
+      xactLast := xactLast & ~xactOnehot
     }
   }
 
@@ -691,7 +693,7 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
   val NET_LATENCY = 64
   val MEM_LATENCY = 32
   val RLIMIT_INC = 1
-  val RLIMIT_PERIOD = 1
+  val RLIMIT_PERIOD = 0
   val RLIMIT_SIZE = 8
 
   xbar.node := sendDriver.node
@@ -717,6 +719,28 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
     sendDriver.module.io.start := io.start
     recvDriver.module.io.start := io.start
     io.finished := sendDriver.module.io.finished && recvDriver.module.io.finished
+
+    val count_start :: count_up :: count_print :: count_done :: Nil = Enum(4)
+    val count_state = RegInit(count_start)
+    val cycle_count = Reg(UInt(64.W))
+    val recv_count = Reg(UInt(1.W))
+
+    when (count_state === count_start && sendPath.module.io.send.req.fire()) {
+      count_state := count_up
+      cycle_count := 0.U
+      recv_count := 1.U
+    }
+    when (count_state === count_up) {
+      cycle_count := cycle_count + 1.U
+      when (recvPath.module.io.recv.comp.fire()) {
+        recv_count := recv_count - 1.U
+        when (recv_count === 0.U) { count_state := count_print }
+      }
+    }
+    when (count_state === count_print) {
+      printf("NIC test completed in %d cycles\n", cycle_count)
+      count_state := count_done
+    }
   }
 }
 
