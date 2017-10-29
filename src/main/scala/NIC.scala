@@ -16,9 +16,9 @@ import IceNetConsts._
 case class NICConfig(
   inBufPackets: Int = 50,
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
-  nMemXacts: Int = 8,
+  nMemXacts: Int = 16,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 20)
 
 case object NICKey extends Field[NICConfig]
 
