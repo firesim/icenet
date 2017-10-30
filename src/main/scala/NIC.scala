@@ -8,7 +8,7 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.TwoWayCounter
-import testchipip.{StreamIO, StreamChannel, SeqQueue, TLHelper}
+import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.util.Random
 import IceNetConsts._
 
