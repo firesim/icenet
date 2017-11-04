@@ -1,7 +1,7 @@
-CFLAGS=-Wall -O2 -fPIC -std=c++11 -I$(RISCV)/include -D__STDC_FORMAT_MACROS
+CFLAGS=-Wall -O2 -g -fPIC -std=c++11 -I$(RISCV)/include -D__STDC_FORMAT_MACROS
 BUILD ?= build
 
-objs := device.o switch.o
+objs := device.o switch.o memoryblade.o
 obj-paths := $(addprefix $(BUILD)/,$(objs))
 
 $(BUILD)/libicenet.so: $(obj-paths)

@@ -3,6 +3,7 @@
 
 #include <queue>
 #include <stdint.h>
+#include <cassert>
 
 #include "fesvr/context.h"
 #include "packet.h"

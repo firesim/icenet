@@ -3,9 +3,11 @@
 
 #include "device.h"
 #include "switch.h"
+#include "memoryblade.h"
 
 class NetworkSwitch *netsw = NULL;
 class NetworkDevice *netdev = NULL;
+class MemoryBlade *memoryblade = NULL;
 
 static inline int euclid(int a, int b)
 {
@@ -31,6 +33,8 @@ extern "C" void network_init(
 
     //netsw = new NetworkSwitch(devname);
     netdev = new NetworkDevice(random_macaddr());
+    memoryblade = new MemoryBlade(netdev);
+
     printf("network_init\n");
 
     //netsw->add_device(netdev);
@@ -66,6 +70,7 @@ extern "C" void network_tick(
     if (netdev->has_out_packet()) {
       network_packet *p = netdev->pop_out_packet();
       printf("packet going out, len=%d\n", p->len);
+      memoryblade->handle_packet(p);
     }
 
     *out_ready = netdev->out_ready();
