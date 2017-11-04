@@ -31,6 +31,7 @@ void NetworkDevice::run(void)
 
     while (true) {
         while (!out_flits.empty()) {
+            assert(send_packet->len < ETH_MAX_WORDS);
             network_packet_add(send_packet, out_flits.front().data);
             if (out_flits.front().last) {
                 out_packets.push(send_packet);

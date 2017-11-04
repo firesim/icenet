@@ -212,6 +212,7 @@ class IceNicReaderModule(outer: IceNicReader)
     sendpart := packpart
     state := s_read
 
+    assert(packlen > 0.U, s"NIC packet length must be >0")
     assert(packaddr(byteAddrBits-1,0) === 0.U &&
            packlen(byteAddrBits-1,0)  === 0.U,
            s"NIC send address and length must be aligned to ${beatBytes} bytes")
