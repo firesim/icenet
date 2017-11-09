@@ -6,7 +6,7 @@ import scala.math.max
 import testchipip.StreamChannel
 import IceNetConsts._
 
-class PacketGen(lengths: Seq[Int], genData: Seq[Long]) extends Module {
+class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
     val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
@@ -47,4 +47,39 @@ class PacketGen(lengths: Seq[Int], genData: Seq[Long]) extends Module {
   io.out.bits.data := dataVec(dataIdx)
   io.out.bits.keep := NET_FULL_KEEP
   io.out.bits.last := pktOffset === lengthVec(pktIdx) - 1.U
+}
+
+class PacketCheck(
+    checkData: Seq[BigInt],
+    checkKeep: Seq[Int],
+    checkLast: Seq[Boolean]) extends Module {
+  val io = IO(new Bundle {
+    val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val finished = Output(Bool())
+  })
+
+  val checkDataVec = Vec(checkData.map(_.U(NET_IF_WIDTH.W)))
+  val checkKeepVec = Vec(checkKeep.map(_.U(NET_IF_BYTES.W)))
+  val checkLastVec = Vec(checkLast.map(_.B))
+
+  val (checkIdx, checkDone) = Counter(io.in.fire(), checkDataVec.length)
+
+  val finished = RegInit(false.B)
+
+  io.in.ready := !finished
+  io.finished := finished
+
+  when (checkDone) { finished := true.B }
+
+  def compareData(a: UInt, b: UInt, keep: UInt) = {
+    val bitmask = FillInterleaved(8, keep)
+    (a & bitmask) === (b & bitmask)
+  }
+
+  assert(!io.in.valid ||
+    (compareData(io.in.bits.data, checkDataVec(checkIdx), io.in.bits.keep) &&
+      io.in.bits.keep === checkKeepVec(checkIdx) &&
+      io.in.bits.last === checkLastVec(checkIdx)),
+    "PacketCheck: input does not match")
+
 }

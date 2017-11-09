@@ -38,7 +38,7 @@ module SimNetwork(
     output [7:0]  net_rlimit_size
 );
 
-    string devname;
+    string devname = "";
     int rlimit_gbps = 64;
     byte rlimit_inc = 1;
     byte rlimit_period = 1;
@@ -58,10 +58,8 @@ module SimNetwork(
     initial begin
         dummy = $value$plusargs("netbw=%d", rlimit_gbps);
         dummy = $value$plusargs("netburst=%d", rlimit_size);
-
-        if ($value$plusargs("netdev=%s", devname) != 0) begin
-            network_init(devname, rlimit_gbps, rlimit_inc, rlimit_period);
-        end
+        dummy = $value$plusargs("netdev=%s", devname);
+        network_init(devname, rlimit_gbps, rlimit_inc, rlimit_period);
     end
 
     /* verilator lint_off WIDTH */

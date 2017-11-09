@@ -3,6 +3,7 @@
 
 #include <queue>
 #include <stdint.h>
+#include <cassert>
 
 #include "fesvr/context.h"
 #include "packet.h"
@@ -37,7 +38,7 @@ class NetworkDevice {
     }
     void push_in_packet(network_packet *packet) { in_packets.push(packet); }
 
-  private:
+  protected:
     std::queue<network_flit> out_flits;
     std::queue<network_flit> in_flits;
 
@@ -45,7 +46,7 @@ class NetworkDevice {
     std::queue<network_packet*> in_packets;
 
     static void host_thread(void *arg);
-    void run(void);
+    virtual void run(void);
 
     context_t* target;
     context_t host;

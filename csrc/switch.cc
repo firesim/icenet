@@ -41,19 +41,26 @@ static int tuntap_alloc(const char *dev, int flags)
 
 NetworkSwitch::NetworkSwitch(const char *ifname)
 {
+    if (ifname == NULL || strlen(ifname) == 0) {
+        fd = -1;
+        goto skip_tuntap;
+    }
+
     fd = tuntap_alloc(ifname, IFF_TAP | IFF_NO_PI);
     if (fd < 0) {
         fprintf(stderr, "Could not open tap interface\n");
         abort();
     }
 
+skip_tuntap:
     main = context_t::current();
     worker.init(worker_thread, this);
 }
 
 NetworkSwitch::~NetworkSwitch()
 {
-    close(fd);
+    if (fd != -1)
+        close(fd);
 }
 
 void NetworkSwitch::worker_thread(void *arg)
@@ -72,6 +79,12 @@ void NetworkSwitch::run(void)
     fd_set rfds, wfds;
     struct timeval timeout;
     int retval;
+
+    if (fd == -1) {
+        while (true)
+            main->switch_to();
+        return;
+    }
 
     timeout.tv_sec = 1;
     timeout.tv_usec = 0;
