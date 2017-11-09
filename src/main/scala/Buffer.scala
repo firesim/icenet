@@ -264,10 +264,7 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
 
   val full = (count + io.alloc.bits.count) > nWords.U
   val xactHeads = Reg(Vec(nXacts, UInt(countBits.W)))
-  val xactCounts = Reg(Vec(nXacts, UInt(countBits.W)))
-
   val curXactHead = xactHeads(io.in.bits.id)
-  val curXactCount = xactCounts(io.in.bits.id)
 
   val occupied = RegInit(false.B)
   val ren = (!occupied || io.out.ready) && (bufValid >> tail)(0)
@@ -282,7 +279,6 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
   io.in.ready := true.B
   io.out.valid := occupied
   io.out.bits := buffer.io.read.data
-  io.out.bits.keep := NET_FULL_KEEP
 
   buffer.io.write.en := io.in.fire()
   buffer.io.write.addr := curXactHead
@@ -297,7 +293,6 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
 
   when (io.in.fire()) {
     xactHeads(io.in.bits.id) := incWrap(curXactHead, 1.U)
-    xactCounts(io.in.bits.id) := curXactCount - 1.U
   }
 
   when (io.out.fire()) { occupied := false.B }
