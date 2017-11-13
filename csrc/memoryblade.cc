@@ -55,7 +55,7 @@ void MemoryBlade::write(uint32_t pageid, uint8_t fragid, char *packetbuf, size_t
     default:
       assert(false == true);
   }
-  printf("targetbuf=%p\n", targetbuf);
+  printf("targetbuf=%p, packetbuf[0]=%d\n", targetbuf, packetbuf[0]);
   memcpy(targetbuf, packetbuf, bytes);
 }
 
@@ -74,12 +74,12 @@ void MemoryBlade::read(uint32_t pageid) {
 #define ceil_div(n, d) (((n) - 1) / (d) + 1)
 
 network_packet *MemoryBlade::build_packet(char *pagebuf, size_t bytes) {
-  printf("building a packet for nic, pagebuf=%p, bytes=%lu\n", pagebuf, bytes);
+  printf("building a packet for nic, pagebuf=%p, pagebuf[0]=%d, bytes=%lu\n", pagebuf, pagebuf[0], bytes);
   network_packet *packet = new network_packet;
-  char *packetbuf = ((char *)packet->data) + NET_IP_ALIGN;
+  char *packetbuf = ((char *)packet->data);
   init_network_packet(packet);
   memcpy(packetbuf, pagebuf, bytes);
-  packet->len = ceil_div(bytes + NET_IP_ALIGN, sizeof(uint64_t));
+  packet->len = ceil_div(bytes, sizeof(uint64_t));
   printf("built a packet for nic, len=%d\n", packet->len);
   return packet;
 }

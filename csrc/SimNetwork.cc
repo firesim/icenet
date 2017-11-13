@@ -69,7 +69,6 @@ extern "C" void network_tick(
     //netsw->switch_to_worker();
     if (netdev->has_out_packet()) {
       network_packet *p = netdev->pop_out_packet();
-      printf("packet going out, len=%d\n", p->len);
       memoryblade->handle_packet(p);
     }
 
