@@ -42,6 +42,28 @@ static inline uint64_t network_packet_dstmac(network_packet *packet)
     return dstmac;
 }
 
+static inline uint64_t network_packet_srcmac(network_packet *packet)
+{
+	uint64_t srcmac = 0;
+
+	memcpy(&srcmac,
+		((char *) packet->data) + NET_IP_ALIGN + MAC_ADDR_BYTES,
+		MAC_ADDR_BYTES);
+
+	return srcmac;
+}
+
+static inline uint16_t network_packet_ethtype(network_packet *packet)
+{
+	uint16_t ethtype;
+
+	memcpy(&ethtype,
+		((char *) packet->data) + NET_IP_ALIGN + 2 * MAC_ADDR_BYTES,
+		2);
+
+	return ethtype;
+}
+
 static inline network_packet *network_packet_copy(network_packet *packet)
 {
     network_packet *packet_copy = new network_packet;

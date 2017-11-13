@@ -42,12 +42,10 @@ extern "C" void network_init(
 
 extern "C" void network_tick(
         unsigned char out_valid,
-        unsigned char *out_ready,
         long long     out_data,
         unsigned char out_last,
 
         unsigned char *in_valid,
-        unsigned char in_ready,
         long long     *in_data,
         unsigned char *in_last,
 
@@ -62,7 +60,7 @@ extern "C" void network_tick(
         return;
     }
 
-    netdev->tick(out_valid, out_data, out_last, in_ready);
+    netdev->tick(out_valid, out_data, out_last);
     netdev->switch_to_host();
 
     //netsw->distribute();
@@ -72,7 +70,6 @@ extern "C" void network_tick(
       memoryblade->handle_packet(p);
     }
 
-    *out_ready = netdev->out_ready();
     *in_valid = netdev->in_valid();
     *in_data = netdev->in_data();
     *in_last = netdev->in_last();

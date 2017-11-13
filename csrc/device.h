@@ -16,10 +16,8 @@ class NetworkDevice {
     void tick(
             bool out_valid,
             uint64_t out_data,
-            bool out_last,
-            bool in_ready);
+            bool out_last);
 
-    bool out_ready() { return true; }
     bool in_valid() { return !in_flits.empty(); }
     uint64_t in_data() { return (in_valid()) ? in_flits.front().data : 0; }
     bool in_last() { return (in_valid()) ? in_flits.front().last : false; }
@@ -40,7 +38,7 @@ class NetworkDevice {
     }
     void push_in_packet(network_packet *packet) { in_packets.push(packet); }
 
-  private:
+  protected:
     std::queue<network_flit> out_flits;
     std::queue<network_flit> in_flits;
 
@@ -48,7 +46,7 @@ class NetworkDevice {
     std::queue<network_packet*> in_packets;
 
     static void host_thread(void *arg);
-    void run(void);
+    virtual void run(void);
 
     context_t* target;
     context_t host;

@@ -15,7 +15,7 @@ import scala.math.max
 import IceNetConsts._
 
 case class NICConfig(
-  inBufPackets: Int = 2,
+  inBufPackets: Int = 50,
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
@@ -393,6 +393,15 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
 
+class NICIOvonly extends Bundle {
+  val in = Flipped(Valid(new StreamChannel(NET_IF_WIDTH)))
+  val out = Valid(new StreamChannel(NET_IF_WIDTH))
+  val macAddr = Input(UInt(ETH_MAC_BITS.W))
+  val rlimit = Input(new RateLimiterSettings)
+
+  override def cloneType = (new NICIOvonly).asInstanceOf[this.type]
+}
+
 /*
  * A simple NIC
  *
@@ -426,7 +435,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
-      val ext = new NICIO
+      val ext = new NICIOvonly
     })
 
     val config = p(NICKey)
@@ -435,8 +444,13 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
     recvPath.module.io.recv <> control.module.io.recv
 
     // connect externally
-    recvPath.module.io.in <> io.ext.in
-    io.ext.out <> sendPath.module.io.out
+    recvPath.module.io.in.bits :=  io.ext.in.bits
+    recvPath.module.io.in.valid :=  io.ext.in.valid
+    //ignore recvPath.module.io.in.ready
+
+    io.ext.out.bits := sendPath.module.io.out.bits
+    io.ext.out.valid := sendPath.module.io.out.valid
+    sendPath.module.io.out.ready := Bool(true)
 
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
@@ -447,7 +461,7 @@ class SimNetwork extends BlackBox {
   val io = IO(new Bundle {
     val clock = Input(Clock())
     val reset = Input(Bool())
-    val net = Flipped(new NICIO)
+    val net = Flipped(new NICIOvonly)
   })
 }
 
@@ -462,12 +476,12 @@ trait HasPeripheryIceNIC extends HasSystemBus {
 
 trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   val outer: HasPeripheryIceNIC
-  val net = IO(new NICIO)
+  val net = IO(new NICIOvonly)
 
   net <> outer.icenic.module.io.ext
 
-  def connectNicLoopback(qDepth: Int = 64) {
-    net.in <> Queue(net.out, qDepth)
+  def connectNicLoopback(dummy: Int = 0) {
+    net.in <> net.out
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)
