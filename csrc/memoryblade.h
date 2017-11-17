@@ -25,8 +25,8 @@ struct remotepage_header {
   remotepage_header(uint64_t data) {
     opcode = data >> 56;
     partid = (data >> 48) & 0xff;
-    pageid = (data >> 16) & 0xffffff;
-    xactid = data & 0xff;
+    pageid = (data >> 16) & 0xffffffff;
+    xactid = data & 0xffff;
   }
 };
 

@@ -8,8 +8,8 @@ MemoryBlade::~MemoryBlade() { }
 
 void MemoryBlade::handle_packet(network_packet *packet) {
   remotepage_header header(packet->data[0]);
-  printf("memory blade handling packet, opcode=%d, partid=%d, pageid=%d, xactid=%d\n",
-            header.opcode, header.partid, header.pageid, header.xactid);
+  printf("memory blade handling packet=%lx, opcode=%d, partid=%d, pageid=%d, xactid=%d\n",
+            packet->data[0], header.opcode, header.partid, header.pageid, header.xactid);
   char *packetbuf = (char *) &packet->data[1];
   size_t bytes = (packet->len - 1) * sizeof(uint64_t);
   switch (header.opcode) {
@@ -67,8 +67,6 @@ void MemoryBlade::read(uint32_t pageid) {
   _netdev->push_in_packet(build_packet((char *) &rp->frag1[0], rp->frag1len * sizeof(uint64_t)));
   _netdev->push_in_packet(build_packet((char *) &rp->frag2[0], rp->frag2len * sizeof(uint64_t)));
   _netdev->push_in_packet(build_packet((char *) &rp->frag3[0], rp->frag3len * sizeof(uint64_t)));
-
-  memory_map.erase(pageid);
 }
 
 #define ceil_div(n, d) (((n) - 1) / (d) + 1)
