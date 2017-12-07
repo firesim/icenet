@@ -417,12 +417,11 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
   val mmionode = TLIdentityNode()
   val dmanode = TLIdentityNode()
-  val intnode = IntIdentityNode()
+  val intnode = control.intnode
 
   control.node := mmionode
   dmanode := sendPath.node
   dmanode := recvPath.node
-  intnode := control.intnode
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
@@ -672,8 +671,8 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
 
   xbar.node := recvDriver.node
   xbar.node := recvPath.node
-  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes)(
-    TLBufferChain(MEM_LATENCY)(xbar.node))
+  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes) :=
+    TLHelper.latency(MEM_LATENCY, xbar.node)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
@@ -720,7 +719,7 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
       data => (0 until 8).map(i => ((data >> (i * 8)) & 0xff).toByte)),
     beatBytes = 8))
 
-  rom.node := TLFragmenter(NET_IF_BYTES, 16)(TLBuffer()(sendPath.node))
+  rom.node := TLFragmenter(NET_IF_BYTES, 16) := TLBuffer() := sendPath.node
 
   val RLIMIT_INC = 1
   val RLIMIT_PERIOD = 0
@@ -793,9 +792,8 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
   xbar.node := recvDriver.node
   xbar.node := sendPath.node
   xbar.node := recvPath.node
-  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes)(
-    TLBufferChain(MEM_LATENCY)(xbar.node))
-
+  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes) :=
+    TLHelper.latency(MEM_LATENCY, xbar.node)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
