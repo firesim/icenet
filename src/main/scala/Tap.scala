@@ -50,8 +50,6 @@ class NetworkTap[T <: Data](
   io.passthru.bits.last := MuxLookup(state, false.B, Seq(
     s_passthru_header -> (bodyLess && headerIdx === headerLen),
     s_passthru_body -> io.inflow.bits.last))
-  io.passthru.bits.keep := MuxLookup(state, ~0.U(wordBytes.W), Seq(
-    s_passthru_body -> io.inflow.bits.keep))
 
   io.tapout.valid := MuxLookup(state, false.B, Seq(
     s_tapout_header -> true.B,
@@ -62,8 +60,6 @@ class NetworkTap[T <: Data](
   io.tapout.bits.last := MuxLookup(state, false.B, Seq(
     s_tapout_header -> (bodyLess && headerIdx === headerLen),
     s_tapout_body -> io.inflow.bits.last))
-  io.tapout.bits.keep := MuxLookup(state, ~0.U(wordBytes.W), Seq(
-    s_tapout_body -> io.inflow.bits.keep))
 
   when (state === s_inflow_header && io.inflow.valid) {
     headerIdx := headerIdx + 1.U
@@ -77,9 +73,6 @@ class NetworkTap[T <: Data](
       bodyLess := io.inflow.bits.last
       state := Mux(headerLast, s_check_header, s_passthru_header)
     }
-
-    assert(io.inflow.bits.keep.andR,
-      "NetworkTap header word cannot be incomplete")
   }
 
   when (state === s_check_header) {

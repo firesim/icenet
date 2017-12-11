@@ -19,7 +19,8 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 10,
+  tapFunc: Option[EthernetHeader => Bool] = None)
 
 case object NICKey extends Field[NICConfig]
 
@@ -371,19 +372,26 @@ class IceNicRecvPath(implicit p: Parameters) extends LazyModule {
 
 class IceNicRecvPathModule(outer: IceNicRecvPath)
     extends LazyModuleImp(outer) {
+  val config = p(NICKey)
+
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
+    val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(NET_IF_WIDTH)))
   })
 
-  val config = p(NICKey)
   val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
   buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
-  writer.io.in <> buffer.io.stream.out
   writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
+  writer.io.in <> config.tapFunc.map { tapFunc =>
+    val tap = Module(new NetworkTap(tapFunc))
+    tap.io.inflow <> buffer.io.stream.out
+    io.tap.get <> tap.io.tapout
+    tap.io.passthru
+  } .getOrElse { buffer.io.stream.out }
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -424,11 +432,12 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
   dmanode := recvPath.node
 
   lazy val module = new LazyModuleImp(this) {
+    val config = p(NICKey)
+
     val io = IO(new Bundle {
       val ext = new NICIO
+      val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(NET_IF_WIDTH)))
     })
-
-    val config = p(NICKey)
 
     sendPath.module.io.send <> control.module.io.send
     recvPath.module.io.recv <> control.module.io.recv
@@ -439,6 +448,10 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
+
+    io.tap.zip(recvPath.module.io.tap).foreach {
+      case (tapout, tapin) => tapout <> tapin
+    }
   }
 }
 
