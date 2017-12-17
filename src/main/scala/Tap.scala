@@ -128,6 +128,8 @@ class NetworkTapTest extends UnitTest {
   tap.io.inflow <> genIn.io.out
   checkTap.io.in <> tap.io.tapout
   checkPass.io.in <> tap.io.passthru
+  checkTap.io.in.bits.keep := NET_FULL_KEEP
+  checkPass.io.in.bits.keep := NET_FULL_KEEP
 
   io.finished := checkTap.io.finished || checkPass.io.finished
 }
