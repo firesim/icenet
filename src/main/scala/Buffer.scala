@@ -90,6 +90,7 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.valid := outValidReg
   io.stream.out.bits.data := outDataReg
   io.stream.out.bits.last := outLastReg
+  io.stream.out.bits.keep := DontCare
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := outHeader(outPhase)
