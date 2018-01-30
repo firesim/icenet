@@ -57,13 +57,15 @@ trait IceNicControllerModule extends HasRegMap {
   val recvCompQueue = Module(new Queue(UInt(NET_LEN_BITS.W), qDepth))
 
   val sendCompValid = sendCompCount > 0.U
+  val intMask = RegInit(0.U(2.W))
 
   io.send.req <> sendReqQueue.io.deq
   io.recv.req <> recvReqQueue.io.deq
   io.send.comp.ready := sendCompCount < 10.U
   recvCompQueue.io.enq <> io.recv.comp
 
-  interrupts(0) := sendCompValid || recvCompQueue.io.deq.valid
+  interrupts(0) := sendCompValid && intMask(0)
+  interrupts(1) := recvCompQueue.io.deq.valid && intMask(1)
 
   val sendReqAvail = (qDepth.U - sendReqQueue.io.count)
   val recvReqAvail = (qDepth.U - recvReqQueue.io.count)
@@ -83,7 +85,8 @@ trait IceNicControllerModule extends HasRegMap {
       RegField.r(4, qDepth.U - recvReqQueue.io.count),
       RegField.r(4, sendCompCount),
       RegField.r(4, recvCompQueue.io.count)),
-    0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)))
+    0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
+    0x20 -> Seq(RegField(2, intMask)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -94,7 +97,7 @@ case class IceNicControllerParams(address: BigInt, beatBytes: Int)
 class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
   extends TLRegisterRouter(
     c.address, "ice-nic", Seq("ucbbar,ice-nic"),
-    interrupts = 1, beatBytes = c.beatBytes)(
+    interrupts = 2, beatBytes = c.beatBytes)(
       new TLRegBundle(c, _)    with IceNicControllerBundle)(
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
