@@ -47,26 +47,34 @@ trait IceNicControllerModule extends HasRegMap {
   val sendCompDown = Wire(init = false.B)
 
   val qDepth = p(NICKey).ctrlQueueDepth
+  require(qDepth < (1 << 8))
+
+  def queueCount[T <: Data](qio: QueueIO[T], depth: Int): UInt =
+    TwoWayCounter(qio.enq.fire(), qio.deq.fire(), depth)
+
   // hold (len, addr) of packets that we need to send out
-  val sendReqQueue = Module(new Queue(UInt(NET_IF_WIDTH.W), qDepth))
+  val sendReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
+  val sendReqCount = queueCount(sendReqQueue.io, qDepth)
   // hold addr of buffers we can write received packets into
-  val recvReqQueue = Module(new Queue(UInt(NET_IF_WIDTH.W), qDepth))
+  val recvReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
+  val recvReqCount = queueCount(recvReqQueue.io, qDepth)
   // count number of sends completed
   val sendCompCount = TwoWayCounter(io.send.comp.fire(), sendCompDown, qDepth)
   // hold length of received packets
-  val recvCompQueue = Module(new Queue(UInt(NET_LEN_BITS.W), qDepth))
+  val recvCompQueue = Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
+  val recvCompCount = queueCount(recvCompQueue.io, qDepth)
 
   val sendCompValid = sendCompCount > 0.U
 
   io.send.req <> sendReqQueue.io.deq
   io.recv.req <> recvReqQueue.io.deq
-  io.send.comp.ready := sendCompCount < 10.U
+  io.send.comp.ready := sendCompCount < qDepth.U
   recvCompQueue.io.enq <> io.recv.comp
 
   interrupts(0) := sendCompValid || recvCompQueue.io.deq.valid
 
-  val sendReqAvail = (qDepth.U - sendReqQueue.io.count)
-  val recvReqAvail = (qDepth.U - recvReqQueue.io.count)
+  val sendReqSpace = (qDepth.U - sendReqCount)
+  val recvReqSpace = (qDepth.U - recvReqCount)
 
   def sendCompRead = (ready: Bool) => {
     sendCompDown := sendCompValid && ready
@@ -79,10 +87,10 @@ trait IceNicControllerModule extends HasRegMap {
     0x10 -> Seq(RegField.r(1, sendCompRead)),
     0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
     0x14 -> Seq(
-      RegField.r(4, qDepth.U - sendReqQueue.io.count),
-      RegField.r(4, qDepth.U - recvReqQueue.io.count),
-      RegField.r(4, sendCompCount),
-      RegField.r(4, recvCompQueue.io.count)),
+      RegField.r(8, sendReqSpace),
+      RegField.r(8, recvReqSpace),
+      RegField.r(8, sendCompCount),
+      RegField.r(8, recvCompCount)),
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)))
 }
 
