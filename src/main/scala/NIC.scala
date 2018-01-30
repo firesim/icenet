@@ -48,13 +48,16 @@ trait IceNicControllerModule extends HasRegMap {
 
   val qDepth = p(NICKey).ctrlQueueDepth
   // hold (len, addr) of packets that we need to send out
-  val sendReqQueue = Module(new Queue(UInt(NET_IF_WIDTH.W), qDepth))
+  val sendReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
+  val sendReqCount = TwoWayCounter(sendReqQueue.io.enq.fire(), io.send.req.fire(), qDepth)
   // hold addr of buffers we can write received packets into
-  val recvReqQueue = Module(new Queue(UInt(NET_IF_WIDTH.W), qDepth))
+  val recvReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
+  val recvReqCount = TwoWayCounter(recvReqQueue.io.enq.fire(), io.recv.req.fire(), qDepth)
   // count number of sends completed
   val sendCompCount = TwoWayCounter(io.send.comp.fire(), sendCompDown, qDepth)
   // hold length of received packets
-  val recvCompQueue = Module(new Queue(UInt(NET_LEN_BITS.W), qDepth))
+  val recvCompQueue = Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
+  val recvCompCount = TwoWayCounter(io.recv.comp.fire(), recvCompQueue.io.deq.fire(), qDepth)
 
   val sendCompValid = sendCompCount > 0.U
   val intMask = RegInit(0.U(2.W))
@@ -67,8 +70,8 @@ trait IceNicControllerModule extends HasRegMap {
   interrupts(0) := sendCompValid && intMask(0)
   interrupts(1) := recvCompQueue.io.deq.valid && intMask(1)
 
-  val sendReqAvail = (qDepth.U - sendReqQueue.io.count)
-  val recvReqAvail = (qDepth.U - recvReqQueue.io.count)
+  val sendReqSpace = (qDepth.U - sendReqCount)
+  val recvReqSpace = (qDepth.U - recvReqCount)
 
   def sendCompRead = (ready: Bool) => {
     sendCompDown := sendCompValid && ready
@@ -81,10 +84,10 @@ trait IceNicControllerModule extends HasRegMap {
     0x10 -> Seq(RegField.r(1, sendCompRead)),
     0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
     0x14 -> Seq(
-      RegField.r(4, qDepth.U - sendReqQueue.io.count),
-      RegField.r(4, qDepth.U - recvReqQueue.io.count),
+      RegField.r(4, sendReqSpace),
+      RegField.r(4, recvReqSpace),
       RegField.r(4, sendCompCount),
-      RegField.r(4, recvCompQueue.io.count)),
+      RegField.r(4, recvCompCount)),
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
     0x20 -> Seq(RegField(2, intMask)))
 }
