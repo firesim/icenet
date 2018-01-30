@@ -431,7 +431,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
   val dmanode = TLIdentityNode()
   val intnode = control.intnode
 
-  control.node := mmionode
+  control.node := TLAtomicAutomata() := mmionode
   dmanode := TLWidthWidget(NET_IF_BYTES) := sendPath.node
   dmanode := TLWidthWidget(NET_IF_BYTES) := recvPath.node
 
