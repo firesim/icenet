@@ -47,6 +47,8 @@ trait IceNicControllerModule extends HasRegMap {
   val sendCompDown = Wire(init = false.B)
 
   val qDepth = p(NICKey).ctrlQueueDepth
+  require(qDepth < (1 << 8))
+
   // hold (len, addr) of packets that we need to send out
   val sendReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
   val sendReqCount = TwoWayCounter(sendReqQueue.io.enq.fire(), io.send.req.fire(), qDepth)
@@ -84,10 +86,10 @@ trait IceNicControllerModule extends HasRegMap {
     0x10 -> Seq(RegField.r(1, sendCompRead)),
     0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
     0x14 -> Seq(
-      RegField.r(4, sendReqSpace),
-      RegField.r(4, recvReqSpace),
-      RegField.r(4, sendCompCount),
-      RegField.r(4, recvCompCount)),
+      RegField.r(8, sendReqSpace),
+      RegField.r(8, recvReqSpace),
+      RegField.r(8, sendCompCount),
+      RegField.r(8, recvCompCount)),
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
     0x20 -> Seq(RegField(2, intMask)))
 }
