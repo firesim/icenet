@@ -66,7 +66,7 @@ trait IceNicControllerModule extends HasRegMap {
 
   io.send.req <> sendReqQueue.io.deq
   io.recv.req <> recvReqQueue.io.deq
-  io.send.comp.ready := sendCompCount < 10.U
+  io.send.comp.ready := sendCompCount < qDepth.U
   recvCompQueue.io.enq <> io.recv.comp
 
   interrupts(0) := sendCompValid && intMask(0)
