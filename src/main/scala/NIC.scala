@@ -495,6 +495,37 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   }
 }
 
+class NICIOvonly extends Bundle {
+  val in = Flipped(Valid(new StreamChannel(NET_IF_WIDTH)))
+  val out = Valid(new StreamChannel(NET_IF_WIDTH))
+  val macAddr = Input(UInt(ETH_MAC_BITS.W))
+  val rlimit = Input(new RateLimiterSettings)
+
+  override def cloneType = (new NICIOvonly).asInstanceOf[this.type]
+}
+
+object NICIOvonly {
+  def apply(nicio: NICIO): NICIOvonly = {
+    val vonly = Wire(new NICIOvonly)
+    vonly.out.valid := nicio.out.valid
+    vonly.out.bits  := nicio.out.bits
+    nicio.out.ready := true.B
+    nicio.in.valid  := vonly.in.valid
+    nicio.in.bits   := vonly.in.bits
+    assert(!vonly.in.valid || nicio.in.ready, "NIC input not ready for valid")
+    nicio.macAddr := vonly.macAddr
+    nicio.rlimit  := vonly.rlimit
+    vonly
+  }
+}
+
+trait HasPeripheryIceNICModuleImpValidOnly extends LazyModuleImp {
+  val outer: HasPeripheryIceNIC
+  val net = IO(new NICIOvonly)
+
+  net <> NICIOvonly(outer.icenic.module.io.ext)
+}
+
 class IceNicTestSendDriver(
     sendReqs: Seq[(Int, Int, Boolean)],
     sendData: Seq[BigInt])(implicit p: Parameters) extends LazyModule {
