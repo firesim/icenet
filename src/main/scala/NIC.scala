@@ -2,7 +2,7 @@ package icenet
 
 import chisel3._
 import chisel3.util._
-import freechips.rocketchip.coreplex.HasSystemBus
+import freechips.rocketchip.subsystem.BaseSubsystem
 import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.devices.tilelink.TLROM
 import freechips.rocketchip.diplomacy._
@@ -463,12 +463,13 @@ class SimNetwork extends BlackBox {
   })
 }
 
-trait HasPeripheryIceNIC extends HasSystemBus {
+trait HasPeripheryIceNIC  { this: BaseSubsystem =>
   private val address = BigInt(0x10016000)
+  private val portName = "Ice-NIC"
 
   val icenic = LazyModule(new IceNIC(address, sbus.beatBytes))
-  icenic.mmionode := sbus.toVariableWidthSlaves
-  sbus.fromSyncPorts() :=* icenic.dmanode
+  sbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
+  sbus.fromPort(Some(portName))() :=* icenic.dmanode
   ibus.fromSync := icenic.intnode
 }
 

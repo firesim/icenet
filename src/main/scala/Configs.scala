@@ -1,7 +1,7 @@
 package icenet
 
 import chisel3._
-import freechips.rocketchip.coreplex.BaseCoreplexConfig
+import freechips.rocketchip.subsystem.BaseSubsystemConfig
 import freechips.rocketchip.config.{Parameters, Config}
 import freechips.rocketchip.unittest.UnitTests
 
@@ -23,4 +23,4 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
 })
 
 class IceNetUnitTestConfig extends Config(
-  new WithIceNetUnitTests ++ new BaseCoreplexConfig)
+  new WithIceNetUnitTests ++ new BaseSubsystemConfig)
