@@ -50,6 +50,7 @@ class NetworkTap[T <: Data](
   io.passthru.bits.last := MuxLookup(state, false.B, Seq(
     s_passthru_header -> (bodyLess && headerIdx === headerLen),
     s_passthru_body -> io.inflow.bits.last))
+  io.passthru.bits.keep := DontCare
 
   io.tapout.valid := MuxLookup(state, false.B, Seq(
     s_tapout_header -> true.B,
@@ -60,6 +61,7 @@ class NetworkTap[T <: Data](
   io.tapout.bits.last := MuxLookup(state, false.B, Seq(
     s_tapout_header -> (bodyLess && headerIdx === headerLen),
     s_tapout_body -> io.inflow.bits.last))
+  io.tapout.bits.keep := DontCare
 
   when (state === s_inflow_header && io.inflow.valid) {
     headerIdx := headerIdx + 1.U
