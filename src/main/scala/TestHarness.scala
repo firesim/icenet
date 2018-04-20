@@ -6,4 +6,5 @@ class TestHarness(implicit p: Parameters) extends freechips.rocketchip.unittest.
 
 object Generator extends testchipip.GeneratorApp {
   generateFirrtl
+  generateAnno
 }
