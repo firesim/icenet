@@ -19,8 +19,7 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10,
-  tapFunc: Option[EthernetHeader => Bool] = None)
+  ctrlQueueDepth: Int = 10)
 
 case object NICKey extends Field[NICConfig]
 
@@ -106,7 +105,8 @@ class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
       new TLRegBundle(c, _)    with IceNicControllerBundle)(
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
-class IceNicSendPath(implicit p: Parameters) extends LazyModule {
+class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
+    extends LazyModule {
   val reader = LazyModule(new IceNicReader)
   val node = TLIdentityNode()
   node := reader.node
@@ -116,6 +116,8 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
       val send = Flipped(new IceNicSendIO)
+      val tap = (nInputTaps > 0).option(
+        Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
       val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
       val rlimit = Input(new RateLimiterSettings)
     })
@@ -129,8 +131,16 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
     val aligner = Module(new Aligner)
     aligner.io.in <> queue.io.out
 
+    val unlimitedOut = if (nInputTaps > 0) {
+      val arb = Module(new HellaPeekingArbiter(
+        new StreamChannel(NET_IF_WIDTH), 1 + nInputTaps,
+        (chan: StreamChannel) => chan.last, rr = true))
+      arb.io.in <> (aligner.io.out +: io.tap.get)
+      arb.io.out
+    } else { aligner.io.out }
+
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
-    limiter.io.in <> aligner.io.out
+    limiter.io.in <> unlimitedOut
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
   }
@@ -375,7 +385,8 @@ class IceNicWriterModule(outer: IceNicWriter)
 /*
  * Recv frames
  */
-class IceNicRecvPath(implicit p: Parameters) extends LazyModule {
+class IceNicRecvPath(val tapFuncs: Seq[EthernetHeader => Bool] = Nil)
+    (implicit p: Parameters) extends LazyModule {
   val writer = LazyModule(new IceNicWriter)
   val node = TLIdentityNode()
   node := writer.node
@@ -389,7 +400,8 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
-    val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val tap = outer.tapFuncs.nonEmpty.option(
+      Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
   })
 
   val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
@@ -398,12 +410,12 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val writer = outer.writer.module
   writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
-  writer.io.in <> config.tapFunc.map { tapFunc =>
-    val tap = Module(new NetworkTap(tapFunc))
+  writer.io.in <> (if (outer.tapFuncs.nonEmpty) {
+    val tap = Module(new NetworkTap(outer.tapFuncs))
     tap.io.inflow <> buffer.io.stream.out
     io.tap.get <> tap.io.tapout
     tap.io.passthru
-  } .getOrElse { buffer.io.stream.out }
+  } else { buffer.io.stream.out })
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -427,13 +439,15 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
  * For now, we elide the Gen by NIC components since we're talking to a 
  * custom network.
  */
-class IceNIC(address: BigInt, beatBytes: Int = 8)
+class IceNIC(address: BigInt, beatBytes: Int = 8,
+    tapOutFuncs: Seq[EthernetHeader => Bool] = Nil,
+    nInputTaps: Int = 0)
     (implicit p: Parameters) extends LazyModule {
 
   val control = LazyModule(new IceNicController(
     IceNicControllerParams(address, beatBytes)))
-  val sendPath = LazyModule(new IceNicSendPath)
-  val recvPath = LazyModule(new IceNicRecvPath)
+  val sendPath = LazyModule(new IceNicSendPath(nInputTaps))
+  val recvPath = LazyModule(new IceNicRecvPath(tapOutFuncs))
 
   val mmionode = TLIdentityNode()
   val dmanode = TLIdentityNode()
@@ -448,7 +462,10 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
     val io = IO(new Bundle {
       val ext = new NICIO
-      val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(NET_IF_WIDTH)))
+      val tapOut = tapOutFuncs.nonEmpty.option(
+        Vec(tapOutFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
+      val tapIn = (nInputTaps > 0).option(
+        Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
     })
 
     sendPath.module.io.send <> control.module.io.send
@@ -461,8 +478,11 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
 
-    io.tap.zip(recvPath.module.io.tap).foreach {
-      case (tapout, tapin) => tapout <> tapin
+    io.tapOut.zip(recvPath.module.io.tap).foreach {
+      case (a, b) => a <> b
+    }
+    sendPath.module.io.tap.zip(io.tapIn).foreach {
+      case (a, b) => a <> b
     }
   }
 }
