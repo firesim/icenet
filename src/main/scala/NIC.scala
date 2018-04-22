@@ -49,17 +49,20 @@ trait IceNicControllerModule extends HasRegMap {
   val qDepth = p(NICKey).ctrlQueueDepth
   require(qDepth < (1 << 8))
 
+  def queueCount[T <: Data](qio: QueueIO[T], depth: Int): UInt =
+    TwoWayCounter(qio.enq.fire(), qio.deq.fire(), depth)
+
   // hold (len, addr) of packets that we need to send out
   val sendReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
-  val sendReqCount = TwoWayCounter(sendReqQueue.io.enq.fire(), io.send.req.fire(), qDepth)
+  val sendReqCount = queueCount(sendReqQueue.io, qDepth)
   // hold addr of buffers we can write received packets into
   val recvReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
-  val recvReqCount = TwoWayCounter(recvReqQueue.io.enq.fire(), io.recv.req.fire(), qDepth)
+  val recvReqCount = queueCount(recvReqQueue.io, qDepth)
   // count number of sends completed
   val sendCompCount = TwoWayCounter(io.send.comp.fire(), sendCompDown, qDepth)
   // hold length of received packets
   val recvCompQueue = Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
-  val recvCompCount = TwoWayCounter(io.recv.comp.fire(), recvCompQueue.io.deq.fire(), qDepth)
+  val recvCompCount = queueCount(recvCompQueue.io, qDepth)
 
   val sendCompValid = sendCompCount > 0.U
   val intMask = RegInit(0.U(2.W))
