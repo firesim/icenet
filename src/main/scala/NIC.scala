@@ -37,6 +37,7 @@ class IceNicRecvIO extends Bundle {
 trait IceNicControllerBundle extends Bundle {
   val send = new IceNicSendIO
   val recv = new IceNicRecvIO
+  val cksum = new IPChecksumIO
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
 
@@ -83,6 +84,16 @@ trait IceNicControllerModule extends HasRegMap {
     (sendCompValid, true.B)
   }
 
+  val cksumReqQueue = Module(new HellaQueue(qDepth)(UInt(64.W)))
+  val cksumRespQueue = Module(new HellaQueue(qDepth)(UInt(16.W)))
+
+  val cksumReqCount = queueCount(cksumReqQueue.io, qDepth)
+  val cksumReqSpace = qDepth.U - cksumReqCount
+  val cksumRespCount = queueCount(cksumRespQueue.io, qDepth)
+
+  io.cksum.request <> cksumReqQueue.io.deq
+  cksumRespQueue.io.enq <> io.cksum.response
+
   regmap(
     0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
     0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
@@ -94,7 +105,12 @@ trait IceNicControllerModule extends HasRegMap {
       RegField.r(8, sendCompCount),
       RegField.r(8, recvCompCount)),
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
-    0x20 -> Seq(RegField(2, intMask)))
+    0x20 -> Seq(RegField(2, intMask)),
+    0x24 -> Seq(
+      RegField.r(8, cksumReqSpace),
+      RegField.r(8, cksumRespCount)),
+    0x26 -> Seq(RegField.r(16, cksumRespQueue.io.deq)),
+    0x28 -> Seq(RegField.w(64, cksumReqQueue.io.enq)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -429,10 +445,12 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
 class IceNIC(address: BigInt, beatBytes: Int = 8)
     (implicit p: Parameters) extends LazyModule {
 
+  val config = p(NICKey)
   val control = LazyModule(new IceNicController(
     IceNicControllerParams(address, beatBytes)))
   val sendPath = LazyModule(new IceNicSendPath)
   val recvPath = LazyModule(new IceNicRecvPath)
+  val checksum = LazyModule(new IPChecksum(config.maxAcquireBytes))
 
   val mmionode = TLIdentityNode()
   val dmanode = TLIdentityNode()
@@ -441,9 +459,9 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
   control.node := TLAtomicAutomata() := mmionode
   dmanode := sendPath.node
   dmanode := recvPath.node
+  dmanode := checksum.node
 
   lazy val module = new LazyModuleImp(this) {
-    val config = p(NICKey)
 
     val io = IO(new Bundle {
       val ext = new NICIO
@@ -452,6 +470,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
     sendPath.module.io.send <> control.module.io.send
     recvPath.module.io.recv <> control.module.io.recv
+    checksum.module.io <> control.module.io.cksum
 
     // connect externally
     recvPath.module.io.in <> io.ext.in
