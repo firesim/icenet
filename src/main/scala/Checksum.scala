@@ -10,36 +10,49 @@ import freechips.rocketchip.tilelink._
 import testchipip.{StreamChannel, TLHelper}
 import scala.util.Random
 
-class IPChecksumBackend extends Module {
+class IPChecksumBackend(dataBits: Int) extends Module {
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new StreamChannel(16)))
+    val in = Flipped(Decoupled(new StreamChannel(dataBits)))
     val out = Decoupled(UInt(16.W))
   })
 
-  val s_accum :: s_fold :: s_out :: Nil = Enum(3)
+  val s_accum :: s_fold :: s_squash :: s_out :: Nil = Enum(4)
   val state = RegInit(s_accum)
 
-  val sum = RegInit(0.U(32.W))
+  val n = dataBits / 16
+  val sums = RegInit(VecInit(Seq.fill(n) { 0.U(32.W) }))
+  val enables = Seq.tabulate(n) { i => io.in.bits.keep(2*i+1, 2*i).andR }
+  val words = Seq.tabulate(n) { i => io.in.bits.data(16*(i+1)-1, 16*i) }
+  val foldIdx = Reg(UInt(log2Ceil(n).W))
 
   when (io.in.fire()) {
-    sum := sum + io.in.bits.data
-    when (io.in.bits.last) { state := s_fold }
+    (sums, enables, words).zipped.foreach {
+      case (sum, en, word) => when (en) { sum := sum + word }
+    }
+    when (io.in.bits.last) { foldIdx := 1.U; state := s_fold }
   }
 
   when (state === s_fold) {
+    sums(0) := sums(0) + sums(foldIdx)
+    foldIdx := foldIdx + 1.U
+    when (foldIdx === (n-1).U) { state := s_squash }
+  }
+
+  when (state === s_squash) {
+    val sum = sums.head
     when (sum(31, 16) =/= 0.U) {
       sum := sum(31, 16) + sum(15, 0)
     } .otherwise { state := s_out }
   }
 
   when (io.out.fire()) {
-    sum := 0.U
+    sums.foreach(sum => sum := 0.U)
     state := s_accum
   }
 
   io.in.ready := state === s_accum
   io.out.valid := state === s_out
-  io.out.bits := ~sum(15, 0)
+  io.out.bits := ~sums.head(15, 0)
 }
 
 class IPChecksumFrontend(maxBytes: Int)
@@ -47,47 +60,47 @@ class IPChecksumFrontend(maxBytes: Int)
   val node = TLHelper.makeClientNode("ip-checksum", IdRange(0, 1))
 
   lazy val module = new LazyModuleImp(this) {
-    val io = IO(new Bundle {
-      val request = Flipped(Decoupled(UInt(64.W)))
-      val stream = Decoupled(new StreamChannel(16))
-    })
-
     val (tl, edge) = node.out(0)
-
     val dataBits = tl.params.dataBits
     val addrBits = tl.params.addressBits
     val beatBytes = dataBits / 8
     val maxBeats = maxBytes / beatBytes
-    val byteOffsetBits = log2Ceil(beatBytes)
-    val beatOffsetBits = log2Ceil(maxBeats)
+    val byteAddrBits = log2Ceil(beatBytes)
 
-    val data = Reg(UInt(dataBits.W))
+    val io = IO(new Bundle {
+      val request = Flipped(Decoupled(UInt(64.W)))
+      val stream = Decoupled(new StreamChannel(dataBits))
+    })
+
     val addr = Reg(UInt(addrBits.W))
-    val byteOffset = addr(byteOffsetBits - 1, 0)
-    val beatOffset = addr(beatOffsetBits + byteOffsetBits - 1, byteOffsetBits)
+    val beatAddr = addr >> byteAddrBits.U
+    val byteAddr = addr(byteAddrBits - 1, 0)
     val len = Reg(UInt(16.W))
-    val beatsLeft = Reg(UInt((beatOffsetBits+1).W))
+    val beatsLeft = Reg(UInt(log2Ceil(maxBeats+1).W))
+    val bytesEnd = byteAddr + len
+    val mask = Cat(((beatBytes-1) to 0 by -1).map(
+      i => i.U >= byteAddr && i.U < bytesEnd))
 
-    val reqSize = MuxCase(byteOffsetBits.U,
-      (log2Ceil(maxBytes) until byteOffsetBits by -1).map(lgSize =>
+    val reqSize = MuxCase(byteAddrBits.U,
+      (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
         (addr(lgSize-1, 0) === 0.U && (len >> lgSize.U) =/= 0.U) -> lgSize.U))
 
-    val s_idle :: s_acquire :: s_grant :: s_stream :: Nil = Enum(4)
+    val s_idle :: s_acquire :: s_grant :: Nil = Enum(3)
     val state = RegInit(s_idle)
 
     io.request.ready := state === s_idle
 
-    io.stream.valid := state === s_stream
-    io.stream.bits.data := data(15, 0)
-    io.stream.bits.keep := DontCare
-    io.stream.bits.last := len === 2.U
+    io.stream.valid := (state === s_grant) && tl.d.valid
+    io.stream.bits.data := tl.d.bits.data
+    io.stream.bits.keep := mask
+    io.stream.bits.last := len <= beatBytes.U
 
     tl.a.valid := state === s_acquire
     tl.a.bits := edge.Get(
       fromSource = 0.U,
-      toAddress = Cat(addr >> byteOffsetBits.U, 0.U(byteOffsetBits.W)),
+      toAddress = Cat(addr >> byteAddrBits.U, 0.U(byteAddrBits.W)),
       lgSize = reqSize)._2
-    tl.d.ready := state === s_grant
+    tl.d.ready := (state === s_grant) && io.stream.ready
 
     when (io.request.fire()) {
       addr := io.request.bits(47, 0)
@@ -97,26 +110,18 @@ class IPChecksumFrontend(maxBytes: Int)
 
     when (tl.a.fire()) {
       assert(tl.a.bits.address(0) === 0.U, "Request must be aligned to 2 bytes")
-      beatsLeft := 1.U << (reqSize - byteOffsetBits.U)
+      beatsLeft := 1.U << (reqSize - byteAddrBits.U)
       state := s_grant
     }
 
     when (tl.d.fire()) {
-      data := tl.d.bits.data >> Cat(byteOffset, 0.U(3.W))
       beatsLeft := beatsLeft - 1.U
-      state := s_stream
-    }
+      addr := Cat(beatAddr + 1.U, 0.U(byteAddrBits.W))
+      len := len - (beatBytes.U - byteAddr)
 
-    when (io.stream.fire()) {
-      data := data >> 16.U
-      addr := addr + 2.U
-      len  := len - 2.U
-      val lastWord = byteOffset === (beatBytes-2).U
-      val lastBeat = beatsLeft === 0.U
-      state := MuxCase(s_stream, Seq(
+      state := MuxCase(s_grant, Seq(
         io.stream.bits.last -> s_idle,
-        (lastWord && lastBeat) -> s_acquire,
-        (lastWord && !lastBeat) -> s_grant))
+        (beatsLeft === 1.U) -> s_acquire))
     }
   }
 }
@@ -133,9 +138,9 @@ class IPChecksum(maxBytes: Int)(implicit p: Parameters) extends LazyModule {
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(Flipped(new IPChecksumIO))
-    val backend = Module(new IPChecksumBackend)
+    val backend = Module(new IPChecksumBackend(frontend.module.dataBits))
     frontend.module.io.request <> io.request
-    backend.io.in <> frontend.module.io.stream
+    backend.io.in <> Queue(frontend.module.io.stream, 2)
     io.response <> backend.io.out
   }
 }
@@ -162,7 +167,7 @@ class IPChecksumTest(implicit p: Parameters) extends LazyModule {
     ~sum & 0xffff
   }
 
-  val expected = calcChecksum(testWords.drop(1))
+  val expected = calcChecksum(testWords.slice(1, 63))
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
@@ -171,7 +176,7 @@ class IPChecksumTest(implicit p: Parameters) extends LazyModule {
     val state = RegInit(s_start)
 
     val addr = 2.U(48.W)
-    val len = 126.U(16.W)
+    val len = 124.U(16.W)
 
     val checksumIO = checksum.module.io
     checksumIO.request.valid := state === s_request
