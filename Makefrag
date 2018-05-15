@@ -1,0 +1,7 @@
+icenet_vsrcs = \
+	$(icenet_dir)/vsrc/SimNetwork.v \
+
+icenet_csrcs = \
+	$(icenet_dir)/csrc/SimNetwork.cc \
+	$(icenet_dir)/csrc/device.cc \
+	$(icenet_dir)/csrc/switch.cc \
