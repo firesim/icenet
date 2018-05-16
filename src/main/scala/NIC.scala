@@ -162,6 +162,8 @@ class IceNicReaderModule(outer: IceNicReader)
   val packlen = io.send.req.bits(NET_IF_WIDTH - 2, midPoint)
   val packaddr = io.send.req.bits(midPoint - 1, 0)
 
+  require(beatBytes == NET_IF_BYTES)
+
   // we allow one TL request at a time to avoid tracking
   val s_idle :: s_read :: s_comp :: Nil = Enum(3)
   val state = RegInit(s_idle)
@@ -290,6 +292,8 @@ class IceNicWriterModule(outer: IceNicWriter)
   val fullAddrBits = tl.params.addressBits
   val byteAddrBits = log2Ceil(beatBytes)
   val addrBits = fullAddrBits - byteAddrBits
+
+  require(beatBytes == NET_IF_BYTES)
 
   val s_idle :: s_data :: s_complete :: Nil = Enum(3)
   val state = RegInit(s_idle)
@@ -428,8 +432,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
   val intnode = control.intnode
 
   control.node := mmionode
-  dmanode := sendPath.node
-  dmanode := recvPath.node
+  dmanode := TLWidthWidget(NET_IF_BYTES) := sendPath.node
+  dmanode := TLWidthWidget(NET_IF_BYTES) := recvPath.node
 
   lazy val module = new LazyModuleImp(this) {
     val config = p(NICKey)
