@@ -75,11 +75,12 @@ class IPChecksumFrontend(maxBytes: Int)
     val addr = Reg(UInt(addrBits.W))
     val beatAddr = addr >> byteAddrBits.U
     val byteAddr = addr(byteAddrBits - 1, 0)
-    val len = Reg(UInt(16.W))
+    val len = Reg(UInt(15.W))
     val beatsLeft = Reg(UInt(log2Ceil(maxBeats+1).W))
     val bytesEnd = byteAddr + len
     val mask = Cat(((beatBytes-1) to 0 by -1).map(
       i => i.U >= byteAddr && i.U < bytesEnd))
+    val partial = Reg(Bool())
 
     val reqSize = MuxCase(byteAddrBits.U,
       (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
@@ -93,7 +94,7 @@ class IPChecksumFrontend(maxBytes: Int)
     io.stream.valid := (state === s_grant) && tl.d.valid
     io.stream.bits.data := tl.d.bits.data
     io.stream.bits.keep := mask
-    io.stream.bits.last := len <= beatBytes.U
+    io.stream.bits.last := len <= beatBytes.U && !partial
 
     tl.a.valid := state === s_acquire
     tl.a.bits := edge.Get(
@@ -104,7 +105,8 @@ class IPChecksumFrontend(maxBytes: Int)
 
     when (io.request.fire()) {
       addr := io.request.bits(47, 0)
-      len := io.request.bits(63, 48)
+      len := io.request.bits(62, 48)
+      partial := io.request.bits(63)
       state := s_acquire
     }
 
@@ -115,12 +117,15 @@ class IPChecksumFrontend(maxBytes: Int)
     }
 
     when (tl.d.fire()) {
+      val bytesSent = beatBytes.U - byteAddr
+      val nextLen = Mux(bytesSent <= len, len - bytesSent, 0.U)
+
       beatsLeft := beatsLeft - 1.U
       addr := Cat(beatAddr + 1.U, 0.U(byteAddrBits.W))
-      len := len - (beatBytes.U - byteAddr)
+      len := nextLen
 
       state := MuxCase(s_grant, Seq(
-        io.stream.bits.last -> s_idle,
+        (nextLen === 0.U) -> s_idle,
         (beatsLeft === 1.U) -> s_acquire))
     }
   }
@@ -167,7 +172,8 @@ class IPChecksumTest(implicit p: Parameters) extends LazyModule {
     ~sum & 0xffff
   }
 
-  val expected = calcChecksum(testWords.slice(1, 63))
+  val expected = calcChecksum(
+    testWords.slice(1, 31) ++ testWords.slice(34, 63))
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
@@ -175,17 +181,21 @@ class IPChecksumTest(implicit p: Parameters) extends LazyModule {
     val s_start :: s_request :: s_response :: s_finished :: Nil = Enum(4)
     val state = RegInit(s_start)
 
-    val addr = 2.U(48.W)
-    val len = 124.U(16.W)
+    val addrs = VecInit(Seq(2, 68).map(_.U(48.W)))
+    val lens  = VecInit(Seq(60, 58).map(_.U(15.W)))
+    val idx = RegInit(0.U(1.W))
 
     val checksumIO = checksum.module.io
     checksumIO.request.valid := state === s_request
-    checksumIO.request.bits := Cat(len, addr)
+    checksumIO.request.bits := Cat(idx =/= 1.U, lens(idx), addrs(idx))
     checksumIO.response.ready := state === s_response
     io.finished := state === s_finished
 
     when (state === s_start && io.start) { state := s_request }
-    when (checksumIO.request.fire()) { state := s_response }
+    when (checksumIO.request.fire()) {
+      idx := idx + 1.U
+      when (idx === 1.U) { state := s_response }
+    }
     when (checksumIO.response.fire()) { state := s_finished }
 
     assert(!checksumIO.response.valid ||
