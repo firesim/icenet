@@ -39,7 +39,7 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 
 class NetworkPacketBuffer[T <: Data](
     nPackets: Int,
-    bufBytesPerPacket: Int = 1024,
+    bufBytesPerPacket: Int = ETH_MAX_BYTES,
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
     headerType: T = new EthernetHeader,
