@@ -9,19 +9,22 @@ import testchipip._
 import IceNetConsts._
 
 class NetworkTap[T <: Data](
-    selectFunc: T => Bool,
+    selectFuncs: Seq[T => Bool],
     headerTyp: T = new EthernetHeader,
     headerBytes: Int = ETH_HEAD_BYTES,
     wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
 
   val wordBits = wordBytes * 8
   val headerWords = headerBytes / wordBytes
+  val n = selectFuncs.length
 
   val io = IO(new Bundle {
     val inflow = Flipped(Decoupled(new StreamChannel(wordBits)))
     val passthru = Decoupled(new StreamChannel(wordBits))
-    val tapout = Decoupled(new StreamChannel(wordBits))
+    val tapout = Vec(n, Decoupled(new StreamChannel(wordBits)))
   })
+
+  assert(n > 0, "NetworkTap must have at least one output tap")
 
   val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
   val header = headerTyp.fromBits(headerVec.toBits)
@@ -34,35 +37,40 @@ class NetworkTap[T <: Data](
   val (s_collect_header :: s_check_header ::
        s_output_header :: s_forward_body :: Nil) = Enum(4)
   val state = RegInit(s_collect_header)
-  val route = Reg(Bool())
+  val route = Reg(Vec(n, Bool()))
 
-  val selectedReady = Mux(route, io.tapout.ready, io.passthru.ready)
+  val selectedReady = MuxCase(io.passthru.ready,
+    route.zip(io.tapout.map(_.ready)))
 
   io.inflow.ready := MuxLookup(state, false.B, Seq(
     s_collect_header -> true.B,
     s_forward_body -> selectedReady))
 
-  io.passthru.valid := MuxLookup(Cat(state, route), false.B, Seq(
+  val hasTapout = route.reduce(_ || _)
+
+  io.passthru.valid := MuxLookup(Cat(state, hasTapout), false.B, Seq(
     Cat(s_output_header, false.B) -> true.B,
     Cat(s_forward_body,  false.B) -> io.inflow.valid))
-  io.passthru.bits.data := MuxLookup(Cat(state, route), 0.U, Seq(
+  io.passthru.bits.data := MuxLookup(Cat(state, hasTapout), 0.U, Seq(
     Cat(s_output_header, false.B) -> headerVec(headerIdx),
     Cat(s_forward_body,  false.B) -> io.inflow.bits.data))
-  io.passthru.bits.last := MuxLookup(Cat(state, route), false.B, Seq(
+  io.passthru.bits.last := MuxLookup(Cat(state, hasTapout), false.B, Seq(
     Cat(s_output_header, false.B) -> (bodyLess && headerIdx === headerLen),
     Cat(s_forward_body,  false.B) -> io.inflow.bits.last))
   io.passthru.bits.keep := DontCare
 
-  io.tapout.valid := MuxLookup(Cat(state, route), false.B, Seq(
-    Cat(s_output_header, true.B) -> true.B,
-    Cat(s_forward_body,  true.B) -> io.inflow.valid))
-  io.tapout.bits.data := MuxLookup(Cat(state, route), 0.U, Seq(
-    Cat(s_output_header, true.B) -> headerVec(headerIdx),
-    Cat(s_forward_body,  true.B) -> io.inflow.bits.data))
-  io.tapout.bits.last := MuxLookup(Cat(state, route), false.B, Seq(
-    Cat(s_output_header, true.B) -> (bodyLess && headerIdx === headerLen),
-    Cat(s_forward_body,  true.B) -> io.inflow.bits.last))
-  io.tapout.bits.keep := DontCare
+  io.tapout.zip(route).foreach { case (tapout, sel) =>
+    tapout.valid := MuxLookup(Cat(state, sel), false.B, Seq(
+      Cat(s_output_header, true.B) -> true.B,
+      Cat(s_forward_body,  true.B) -> io.inflow.valid))
+    tapout.bits.data := MuxLookup(Cat(state, sel), 0.U, Seq(
+      Cat(s_output_header, true.B) -> headerVec(headerIdx),
+      Cat(s_forward_body,  true.B) -> io.inflow.bits.data))
+    tapout.bits.last := MuxLookup(Cat(state, sel), false.B, Seq(
+      Cat(s_output_header, true.B) -> (bodyLess && headerIdx === headerLen),
+      Cat(s_forward_body,  true.B) -> io.inflow.bits.last))
+    tapout.bits.keep := DontCare
+  }
 
   when (state === s_collect_header && io.inflow.valid) {
     headerIdx := headerIdx + 1.U
@@ -78,14 +86,14 @@ class NetworkTap[T <: Data](
       when (headerLast) {
         state := s_check_header
       } .otherwise {
-        route := false.B
+        route.foreach(_ := false.B)
         state := s_output_header
       }
     }
   }
 
   when (state === s_check_header) {
-    route := selectFunc(header)
+    route := selectFuncs.map(_(header))
     state := s_output_header
   }
 
@@ -132,9 +140,9 @@ class NetworkTapTest extends UnitTest {
   val checkPass = Module(new PacketCheck(passData, passKeep, passLast))
 
   val tap = Module(new NetworkTap(
-    (header: EthernetHeader) => header.ethType === 0x800.U))
+    Seq((header: EthernetHeader) => header.ethType === 0x800.U)))
   tap.io.inflow <> genIn.io.out
-  checkTap.io.in <> tap.io.tapout
+  checkTap.io.in <> tap.io.tapout(0)
   checkPass.io.in <> tap.io.passthru
   checkTap.io.in.bits.keep := NET_FULL_KEEP
   checkPass.io.in.bits.keep := NET_FULL_KEEP

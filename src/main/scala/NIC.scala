@@ -20,7 +20,7 @@ case class NICConfig(
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
   ctrlQueueDepth: Int = 10,
-  tapFunc: Option[EthernetHeader => Bool] = None)
+  tapFuncs: Seq[EthernetHeader => Bool] = Nil)
 
 case object NICKey extends Field[NICConfig]
 
@@ -408,7 +408,8 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
-    val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val tap = config.tapFuncs.nonEmpty.option(
+      Vec(config.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
   })
 
   val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
@@ -417,12 +418,12 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val writer = outer.writer.module
   writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
-  writer.io.in <> config.tapFunc.map { tapFunc =>
-    val tap = Module(new NetworkTap(tapFunc))
+  writer.io.in <> (if (config.tapFuncs.nonEmpty) {
+    val tap = Module(new NetworkTap(config.tapFuncs))
     tap.io.inflow <> buffer.io.stream.out
     io.tap.get <> tap.io.tapout
     tap.io.passthru
-  } .getOrElse { buffer.io.stream.out }
+  } else { buffer.io.stream.out })
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -469,7 +470,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
     val io = IO(new Bundle {
       val ext = new NICIO
-      val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(NET_IF_WIDTH)))
+      val tap = config.tapFuncs.nonEmpty.option(
+        Vec(config.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
     })
 
     sendPath.module.io.send <> control.module.io.send
