@@ -41,8 +41,8 @@ class NetworkPacketBuffer[T <: Data](
     nPackets: Int,
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
-    headerType: T = new EthernetHeader,
-    wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
+    headerType: T = new EthernetHeader(64),
+    wordBytes: Int = 8) extends Module {
 
   val maxWords = maxBytes / wordBytes
   val headerWords = headerBytes / wordBytes
@@ -58,13 +58,12 @@ class NetworkPacketBuffer[T <: Data](
     val count = Output(UInt(log2Ceil(nPackets+1).W))
   })
 
-  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
-    "NetworkPacketBuffer does not handle missing data")
+  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR, "NetworkPacketBuffer does not handle missing data")
 
   val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, Bits(wordBits.W))) }
   val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(wordBits.W))) }
   val bufLengths = Seq.fill(nPackets) { RegInit(0.U(idxBits.W)) }
-  val bufValid = Vec(bufLengths.map(len => len > 0.U))
+  val bufValid = VecInit(bufLengths.map(len => len > 0.U))
 
   val inIdx = RegInit(0.U(idxBits.W))
   val inDrop = RegInit(false.B)
@@ -73,17 +72,22 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
-  val outHeader = Vec(headers.map(
-    header => headerType.fromBits(Cat(header.reverse))))
-  val outLast = Vec(bufLengths.map(len => outIdx === (len - 1.U)))
+  //AJG: Problematic area
+  //There is REg of vectors that is being accessed
+  //So headers(idx) gets a specific amount of headerWords
+  //val outHeader = VecInit(headers.map(header => headerType.asTypeOf(Cat(header.reverse))))
+  //                                                                This is not HW? This just makes a .U element
+  //                                                                the goal of this is to construct a headerType of object
+  val outHeader = VecInit(headers.map(header => Cat(header.reverse).asTypeOf(headerType)))
+  val outLast = VecInit(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValidReg = RegInit(false.B)
 
   val ren = (io.stream.out.ready || !outValidReg) && bufValid(outPhase)
-  val wen = Wire(init = false.B)
+  val wen = WireInit(false.B)
   val hwen = wen && inIdx < headerWords.U
 
   val outPhaseReg = RegEnable(outPhase, ren)
-  val outDataReg = Vec(buffers.map(buffer => buffer.io.read.data))(outPhaseReg)
+  val outDataReg = VecInit(buffers.map(buffer => buffer.io.read.data))(outPhaseReg)
   val outLastReg = RegEnable(outLast(outPhase), ren)
   val outIdxReg = RegEnable(outIdx, ren)
 
@@ -94,7 +98,7 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := outHeader(outPhase)
-  io.length := RegEnable(Vec(bufLengths)(outPhase), ren) - outIdxReg
+  io.length := RegEnable(VecInit(bufLengths)(outPhase), ren) - outIdxReg
   io.count := RegEnable(PopCount(bufValid), ren)
 
   when (io.stream.out.fire()) { outValidReg := false.B }
@@ -102,8 +106,8 @@ class NetworkPacketBuffer[T <: Data](
 
   def wrapInc(x: UInt) = Mux(x === (nPackets - 1).U, 0.U, x + 1.U)
 
-  val bufLenSet = Wire(init = false.B)
-  val bufLenClear = Wire(init = false.B)
+  val bufLenSet = WireInit(false.B)
+  val bufLenClear = WireInit(false.B)
 
   for (i <- 0 until nPackets) {
     val buffer = buffers(i)
@@ -159,12 +163,12 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest(100000) {
-  val buffer = Module(new NetworkPacketBuffer(2, 32, 8, UInt(64.W), 4))
-
+  val networkConfig = new IceNetConfig(NET_IF_WIDTH=64)
+  val buffer = Module(new NetworkPacketBuffer(nPackets=2, maxBytes=32, headerBytes=8, headerType=UInt(64.W), wordBytes=(networkConfig.NET_IF_WIDTH/8)))
   val rnd = new Random
   val nPackets = 64
   val phaseBits = log2Ceil(nPackets)
-  val packetLengths = Vec(Seq.fill(nPackets) { (2 + rnd.nextInt(6)).U(3.W) })
+  val packetLengths = VecInit(Seq.fill(nPackets) { (2 + rnd.nextInt(6)).U(3.W) })
 
   val inLFSR = LFSR16(buffer.io.stream.in.fire())
   val outLFSR = LFSR16(buffer.io.stream.out.fire())
@@ -229,17 +233,17 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
     new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
-class ReservationBufferData(nXacts: Int) extends Bundle {
+class ReservationBufferData(nXacts: Int, ifWidth: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
 
   val id = UInt(xactIdBits.W)
-  val data = new StreamChannel(NET_IF_WIDTH)
+  val data = new StreamChannel(ifWidth)
 
   override def cloneType =
-    new ReservationBufferData(nXacts).asInstanceOf[this.type]
+    new ReservationBufferData(nXacts, ifWidth).asInstanceOf[this.type]
 }
 
-class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
+class ReservationBuffer(nXacts: Int, nWords: Int, ifWidth: Int) extends Module {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
 
@@ -247,8 +251,8 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
 
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(new ReservationBufferAlloc(nXacts, nWords)))
-    val in = Flipped(Decoupled(new ReservationBufferData(nXacts)))
-    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val in = Flipped(Decoupled(new ReservationBufferData(nXacts, ifWidth)))
+    val out = Decoupled(new StreamChannel(ifWidth))
   })
 
   def incWrap(cur: UInt, inc: UInt): UInt = {
@@ -256,7 +260,7 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
     Mux(unwrapped >= nWords.U, unwrapped - nWords.U, unwrapped)
   }
 
-  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(NET_IF_WIDTH)))
+  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(ifWidth)))
   val bufValid = RegInit(0.U(nWords.W))
 
   val head = RegInit(0.U(countBits.W))

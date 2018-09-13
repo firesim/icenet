@@ -10,9 +10,9 @@ import IceNetConsts._
 
 class NetworkTap[T <: Data](
     selectFunc: T => Bool,
-    headerTyp: T = new EthernetHeader,
+    headerType: T = new EthernetHeader(64),
     headerBytes: Int = ETH_HEAD_BYTES,
-    wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
+    wordBytes: Int) extends Module {
 
   val wordBits = wordBytes * 8
   val headerWords = headerBytes / wordBytes
@@ -24,7 +24,8 @@ class NetworkTap[T <: Data](
   })
 
   val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
-  val header = headerTyp.fromBits(headerVec.toBits)
+  //val header = headerType.fromBits(headerVec.toBits)
+  val header = headerVec.asUInt().asTypeOf(headerType)
 
   val idxBits = log2Ceil(headerWords)
   val headerIdx = RegInit(0.U(idxBits.W))
@@ -50,6 +51,10 @@ class NetworkTap[T <: Data](
   io.passthru.bits.last := MuxLookup(state, false.B, Seq(
     s_passthru_header -> (bodyLess && headerIdx === headerLen),
     s_passthru_body -> io.inflow.bits.last))
+
+  // AJG: Is this necessary
+  io.passthru.bits.keep := DontCare
+  io.tapout.bits.keep := DontCare
 
   io.tapout.valid := MuxLookup(state, false.B, Seq(
     s_tapout_header -> true.B,
@@ -103,8 +108,9 @@ class NetworkTapTest extends UnitTest {
     Seq(0L))
   val sendLengths = sendPayloads.map(_.size)
   val sendData = sendPayloads.flatten.map(l => BigInt(l))
+  val netConfig = new IceNetConfig(NET_IF_WIDTH = 64) 
 
-  val genIn = Module(new PacketGen(sendLengths, sendData))
+  val genIn = Module(new PacketGen(sendLengths, sendData, netConfig))
   genIn.io.start := io.start
 
   val tapPayloads = sendPayloads.take(2)
@@ -113,7 +119,7 @@ class NetworkTapTest extends UnitTest {
   val tapLast = tapPayloads.flatMap {
     pl => (Seq.fill(pl.size-1) { false } ++ Seq(true))
   }
-  val checkTap = Module(new PacketCheck(tapData, tapKeep, tapLast))
+  val checkTap = Module(new PacketCheck(tapData, tapKeep, tapLast, netConfig))
 
   val passPayloads = sendPayloads.drop(2)
   val passData = passPayloads.flatten.map(l => BigInt(l))
@@ -121,15 +127,14 @@ class NetworkTapTest extends UnitTest {
   val passLast = passPayloads.flatMap {
     pl => (Seq.fill(pl.size-1) { false } ++ Seq(true))
   }
-  val checkPass = Module(new PacketCheck(passData, passKeep, passLast))
+  val checkPass = Module(new PacketCheck(passData, passKeep, passLast, netConfig))
 
-  val tap = Module(new NetworkTap(
-    (header: EthernetHeader) => header.ethType === 0x800.U))
+  val tap = Module(new NetworkTap((header: EthernetHeader) => header.ethType === 0x800.U, headerType = new EthernetHeader(netConfig.NET_IF_WIDTH), wordBytes = netConfig.NET_IF_WIDTH / 8))
   tap.io.inflow <> genIn.io.out
   checkTap.io.in <> tap.io.tapout
   checkPass.io.in <> tap.io.passthru
-  checkTap.io.in.bits.keep := NET_FULL_KEEP
-  checkPass.io.in.bits.keep := NET_FULL_KEEP
+  checkTap.io.in.bits.keep := netConfig.NET_FULL_KEEP 
+  checkPass.io.in.bits.keep := netConfig.NET_FULL_KEEP 
 
   io.finished := checkTap.io.finished || checkPass.io.finished
 }
