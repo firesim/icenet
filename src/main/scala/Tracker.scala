@@ -8,8 +8,8 @@ import IceNetConsts._
 
 class CreditTracker(inCredits: Int, netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
-    val ext = new ValidStreamIO(netConfig.NET_IF_WIDTH)
-    val int = Flipped(new StreamIO(netConfig.NET_IF_WIDTH))
+    val ext = new ValidStreamIO(netConfig.NET_IF_WIDTH_BITS)
+    val int = Flipped(new StreamIO(netConfig.NET_IF_WIDTH_BITS))
     val in_free = Input(Bool())
   })
 
@@ -44,7 +44,10 @@ class CreditTracker(inCredits: Int, netConfig: IceNetConfig) extends Module {
   io.int.in.bits := io.ext.in.bits
   io.int.out.ready := out_space > 0.U && !send_credit_mess
   io.ext.out.valid := send_credit_mess || io.int.out.fire()
-  io.ext.out.bits.keep := DontCare // AJG: Is this necessary
+
+  // AJG: TODO: Added this to compile. Is this OK?
+  io.ext.out.bits.keep := DontCare
+
   io.ext.out.bits.data := Mux(send_credit_mess,
     Cat(in_space_pending, true.B), io.int.out.bits.data)
   io.ext.out.bits.last := send_credit_mess || io.int.out.bits.last
@@ -72,15 +75,14 @@ class CreditTrackerTest extends UnitTest {
   val s_idle :: s_send :: s_wait :: s_done :: Nil = Enum(4)
   val state = RegInit(s_idle)
 
-  // AJG: Added for the test
-  val netConfig = new IceNetConfig(NET_IF_WIDTH=64)
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS=64)
 
   // Make sure leading numbers are all even
-  val testData = VecInit(Seq(0, 5, 7, 28, 11, 34).map(_.U(netConfig.NET_IF_WIDTH.W)))
+  val testData = VecInit(Seq(0, 5, 7, 28, 11, 34).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
   val testLast = VecInit(Seq(false, false, true, false, true, true).map(_.B))
 
   val tracker = Module(new CreditTracker(1, netConfig))
-  val queue = Module(new DelayQueue(new StreamChannel(netConfig.NET_IF_WIDTH), 5))
+  val queue = Module(new DelayQueue(new StreamChannel(netConfig.NET_IF_WIDTH_BITS), 5))
 
   val (outIdx, outDone) = Counter(tracker.io.int.out.fire(), testData.size)
   val (inIdx, inDone) = Counter(queue.io.deq.fire(), testData.size)

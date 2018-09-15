@@ -25,9 +25,9 @@ object IceNetConsts {
 /* Main constants that govern the network itself
  */
 case class IceNetConfig(
-  val NET_IF_WIDTH: Int = 64,
+  val NET_IF_WIDTH_BITS: Int = 64,
   val NET_LEN_BITS: Int = 16
 ){
-  def NET_FULL_KEEP = ~0.U(NET_IF_BYTES.W)
-  def NET_IF_BYTES: Int = NET_IF_WIDTH/8
+  def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
+  def NET_IF_WIDTH_BYTES: Int = NET_IF_WIDTH_BITS / 8
 }

@@ -72,12 +72,6 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
-  //AJG: Problematic area
-  //There is REg of vectors that is being accessed
-  //So headers(idx) gets a specific amount of headerWords
-  //val outHeader = VecInit(headers.map(header => headerType.asTypeOf(Cat(header.reverse))))
-  //                                                                This is not HW? This just makes a .U element
-  //                                                                the goal of this is to construct a headerType of object
   val outHeader = VecInit(headers.map(header => Cat(header.reverse).asTypeOf(headerType)))
   val outLast = VecInit(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValidReg = RegInit(false.B)
@@ -163,8 +157,8 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest(100000) {
-  val networkConfig = new IceNetConfig(NET_IF_WIDTH=64)
-  val buffer = Module(new NetworkPacketBuffer(nPackets=2, maxBytes=32, headerBytes=8, headerType=UInt(64.W), wordBytes=(networkConfig.NET_IF_WIDTH/8)))
+  val networkConfig = new IceNetConfig(NET_IF_WIDTH_BITS = 64)
+  val buffer = Module(new NetworkPacketBuffer(nPackets = 2, maxBytes = 32, headerBytes = 8, headerType = UInt(64.W), wordBytes = networkConfig.NET_IF_WIDTH_BYTES))
   val rnd = new Random
   val nPackets = 64
   val phaseBits = log2Ceil(nPackets)

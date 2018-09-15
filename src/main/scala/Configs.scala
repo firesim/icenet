@@ -6,7 +6,7 @@ import freechips.rocketchip.config.{Parameters, Config}
 import freechips.rocketchip.unittest.UnitTests
 
 class WithIceNetUnitTests extends Config((site, here, up) => {
-  case NICKey => NICConfig(NET_IF_WIDTH = 64)
+  case NICKey => NICConfig(NET_IF_WIDTH_BITS = 64)
   case UnitTests => (p: Parameters) => {
     Seq(
       Module(new NetworkPacketBufferTest),

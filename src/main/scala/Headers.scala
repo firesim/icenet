@@ -40,7 +40,10 @@ object EthernetHeader {
     header.dstmac := dstmac
     header.srcmac := srcmac
     header.ethType := ethType
-    header.padding := DontCare //AJG: Is this necessary? How do you do padding in Chisel?
+
+    //AJG: TODO: Added this to compile. Is this OK?
+    header.padding := DontCare
+
     header
   }
 }

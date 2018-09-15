@@ -9,13 +9,13 @@ import IceNetConsts._
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
-    val out = Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH))
+    val out = Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH_BITS))
   })
 
   val maxLength = lengths.reduce(max(_, _))
   val totalLength = lengths.reduce(_ + _)
   val lengthVec = VecInit(lengths.map(_.U))
-  val dataVec = VecInit(genData.map(_.U(netConsts.NET_IF_WIDTH.W)))
+  val dataVec = VecInit(genData.map(_.U(netConsts.NET_IF_WIDTH_BITS.W)))
 
   require(totalLength == genData.size)
 
@@ -55,12 +55,12 @@ class PacketCheck(
     checkLast: Seq[Boolean],
     netConsts: IceNetConfig) extends Module {
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH)))
+    val in = Flipped(Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH_BITS)))
     val finished = Output(Bool())
   })
 
-  val checkDataVec = VecInit(checkData.map(_.U(netConsts.NET_IF_WIDTH.W)))
-  val checkKeepVec = VecInit(checkKeep.map(_.U(netConsts.NET_IF_BYTES.W)))
+  val checkDataVec = VecInit(checkData.map(_.U(netConsts.NET_IF_WIDTH_BITS.W)))
+  val checkKeepVec = VecInit(checkKeep.map(_.U(netConsts.NET_IF_WIDTH_BYTES.W)))
   val checkLastVec = VecInit(checkLast.map(_.B))
 
   val (checkIdx, checkDone) = Counter(io.in.fire(), checkDataVec.length)

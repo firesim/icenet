@@ -52,7 +52,7 @@ class NetworkTap[T <: Data](
     s_passthru_header -> (bodyLess && headerIdx === headerLen),
     s_passthru_body -> io.inflow.bits.last))
 
-  // AJG: Is this necessary
+  // AJG: TODO: Added this to compile. Is this OK? 
   io.passthru.bits.keep := DontCare
   io.tapout.bits.keep := DontCare
 
@@ -108,7 +108,7 @@ class NetworkTapTest extends UnitTest {
     Seq(0L))
   val sendLengths = sendPayloads.map(_.size)
   val sendData = sendPayloads.flatten.map(l => BigInt(l))
-  val netConfig = new IceNetConfig(NET_IF_WIDTH = 64) 
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = 64) 
 
   val genIn = Module(new PacketGen(sendLengths, sendData, netConfig))
   genIn.io.start := io.start
@@ -129,7 +129,7 @@ class NetworkTapTest extends UnitTest {
   }
   val checkPass = Module(new PacketCheck(passData, passKeep, passLast, netConfig))
 
-  val tap = Module(new NetworkTap((header: EthernetHeader) => header.ethType === 0x800.U, headerType = new EthernetHeader(netConfig.NET_IF_WIDTH), wordBytes = netConfig.NET_IF_WIDTH / 8))
+  val tap = Module(new NetworkTap((header: EthernetHeader) => header.ethType === 0x800.U, headerType = new EthernetHeader(netConfig.NET_IF_WIDTH_BITS), wordBytes = netConfig.NET_IF_WIDTH_BYTES))
   tap.io.inflow <> genIn.io.out
   checkTap.io.in <> tap.io.tapout
   checkPass.io.in <> tap.io.passthru

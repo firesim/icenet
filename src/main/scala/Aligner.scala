@@ -7,12 +7,12 @@ import testchipip.StreamIO
 import IceNetConsts._
 
 class Aligner(netConfig: IceNetConfig) extends Module {
-  val io = IO(new StreamIO(netConfig.NET_IF_WIDTH))
+  val io = IO(new StreamIO(netConfig.NET_IF_WIDTH_BITS))
 
-  val data = RegInit(0.U(netConfig.NET_IF_WIDTH.W))
-  val keep = RegInit(0.U(netConfig.NET_IF_BYTES.W))
+  val data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W))
+  val keep = RegInit(0.U(netConfig.NET_IF_WIDTH_BYTES.W))
   val last = RegInit(false.B)
-  val nbytes = RegInit(0.U(log2Ceil(netConfig.NET_IF_BYTES + 1).W))
+  val nbytes = RegInit(0.U(log2Ceil(netConfig.NET_IF_WIDTH_BYTES + 1).W))
 
   assert(!io.in.valid || io.in.bits.keep.orR,
     "Aligner cannot handle an empty flit")
@@ -25,22 +25,22 @@ class Aligner(netConfig: IceNetConfig) extends Module {
   val bitmask = FillInterleaved(8, keep)
   val full_data = ((io.in.bits.data >> rshift_bit) << nbits) | (data & bitmask)
   val full_nbytes = PopCount(full_keep)
-  val fwd_last = io.in.bits.last && (full_keep >> netConfig.NET_IF_BYTES.U) === 0.U
+  val fwd_last = io.in.bits.last && (full_keep >> netConfig.NET_IF_WIDTH_BYTES.U) === 0.U
 
   io.out.valid := (last && nbytes > 0.U) ||
-                  (io.in.valid && (fwd_last || full_nbytes >= netConfig.NET_IF_BYTES.U))
-  io.out.bits.data := Mux(last, data, full_data(netConfig.NET_IF_WIDTH-1, 0))
-  io.out.bits.keep := Mux(last, keep, full_keep(netConfig.NET_IF_BYTES-1, 0))
+                  (io.in.valid && (fwd_last || full_nbytes >= netConfig.NET_IF_WIDTH_BYTES.U))
+  io.out.bits.data := Mux(last, data, full_data(netConfig.NET_IF_WIDTH_BITS-1, 0))
+  io.out.bits.keep := Mux(last, keep, full_keep(netConfig.NET_IF_WIDTH_BYTES-1, 0))
   io.out.bits.last := last || fwd_last
 
-  io.in.ready := full_nbytes < netConfig.NET_IF_BYTES.U ||
+  io.in.ready := full_nbytes < netConfig.NET_IF_WIDTH_BYTES.U ||
                  (io.out.ready && !last)
 
   when (io.in.fire() && io.out.fire()) {
-    data := full_data >> netConfig.NET_IF_WIDTH.U
-    keep := full_keep >> netConfig.NET_IF_BYTES.U
+    data := full_data >> netConfig.NET_IF_WIDTH_BITS.U
+    keep := full_keep >> netConfig.NET_IF_WIDTH_BYTES.U
     last := io.in.bits.last && !fwd_last
-    nbytes := Mux(fwd_last, 0.U, full_nbytes - netConfig.NET_IF_BYTES.U)
+    nbytes := Mux(fwd_last, 0.U, full_nbytes - netConfig.NET_IF_WIDTH_BYTES.U)
   } .elsewhen (io.in.fire()) {
     data := full_data
     keep := full_keep
@@ -81,7 +81,7 @@ class AlignerTest extends UnitTest {
   val sending = RegInit(false.B)
   val receiving = RegInit(false.B)
 
-  val aligner = Module(new Aligner(new IceNetConfig(NET_IF_WIDTH = 64)))
+  val aligner = Module(new Aligner(new IceNetConfig(NET_IF_WIDTH_BITS = 64)))
 
   val (inIdx, inDone) = Counter(aligner.io.in.fire(), inData.size)
   val (outIdx, outDone) = Counter(aligner.io.out.fire(), outData.size)
