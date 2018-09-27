@@ -71,11 +71,11 @@ class DelayQueue[T <: Data](typ: T, stages: Int) extends Module {
   io.deq <> queues.last.io.deq
 }
 
-class CreditTrackerTest extends UnitTest {
+class CreditTrackerTest(testWidth: Int = 64) extends UnitTest {
   val s_idle :: s_send :: s_wait :: s_done :: Nil = Enum(4)
   val state = RegInit(s_idle)
 
-  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS=64)
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS=testWidth)
 
   // Make sure leading numbers are all even
   val testData = VecInit(Seq(0, 5, 7, 28, 11, 34).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))

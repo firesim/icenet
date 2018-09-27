@@ -37,15 +37,23 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   io.read.data := Mux(rbypass, rbypass_data, rread_data)
 }
 
+/**
+ * Creates a network packet buffer.
+ * @param nPackets number of packets to send over the network
+ * @param maxBytes max size in bytes of the packet
+ * @param headerBytes size of the header in bytes
+ * @param headerType class of header to be used
+ * @param wordBytes size of a flit (split of the data to send)
+ */
 class NetworkPacketBuffer[T <: Data](
     nPackets: Int,
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
-    headerType: T = new EthernetHeader(64),
+    headerType: T = new EthernetHeader,
     wordBytes: Int = 8) extends Module {
 
-  val maxWords = maxBytes / wordBytes
-  val headerWords = headerBytes / wordBytes
+  val maxWords = if (wordBytes > maxBytes) 1 else maxBytes/wordBytes 
+  val headerWords = if (wordBytes > headerBytes) 1  else headerBytes/wordBytes 
   val wordBits = wordBytes * 8
 
   val idxBits = log2Ceil(maxWords + 1)
@@ -156,9 +164,18 @@ class NetworkPacketBuffer[T <: Data](
   }
 }
 
-class NetworkPacketBufferTest extends UnitTest(100000) {
-  val networkConfig = new IceNetConfig(NET_IF_WIDTH_BITS = 64)
-  val buffer = Module(new NetworkPacketBuffer(nPackets = 2, maxBytes = 32, headerBytes = 8, headerType = UInt(64.W), wordBytes = networkConfig.NET_IF_WIDTH_BYTES))
+/**
+ * Creates a network packet test.
+ * @param testWidth flit size for the test
+ */
+class NetworkPacketBufferTest(testWidth: Int = 64) extends UnitTest(100000) {
+  val networkConfig = new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)
+  val ethWidthBytes = 8
+  val buffer = Module(new NetworkPacketBuffer(nPackets = 2,
+                                              maxBytes = 32,
+                                              headerBytes = ethWidthBytes,
+                                              headerType = UInt((ethWidthBytes*8).W),
+                                              wordBytes = networkConfig.NET_IF_WIDTH_BYTES))
   val rnd = new Random
   val nPackets = 64
   val phaseBits = log2Ceil(nPackets)

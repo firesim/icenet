@@ -54,7 +54,7 @@ class Aligner(netConfig: IceNetConfig) extends Module {
   }
 }
 
-class AlignerTest extends UnitTest {
+class AlignerTest(testWidth: Int = 64) extends UnitTest {
   val inData = VecInit(
     "h0011223344556677".U,
     "h8899AABBCCDDEEFF".U,
@@ -81,7 +81,7 @@ class AlignerTest extends UnitTest {
   val sending = RegInit(false.B)
   val receiving = RegInit(false.B)
 
-  val aligner = Module(new Aligner(new IceNetConfig(NET_IF_WIDTH_BITS = 64)))
+  val aligner = Module(new Aligner(new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)))
 
   val (inIdx, inDone) = Counter(aligner.io.in.fire(), inData.size)
   val (outIdx, outDone) = Counter(aligner.io.out.fire(), outData.size)

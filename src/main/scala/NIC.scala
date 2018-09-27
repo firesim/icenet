@@ -400,7 +400,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   })
 
   val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = config.NET_IF_WIDTH_BITS)
-  val ethHeader = new EthernetHeader(config.NET_IF_WIDTH_BITS)
+  val ethHeader = new EthernetHeader
   val buffer = Module(new NetworkPacketBuffer(config.inBufPackets, headerType = ethHeader, wordBytes = config.NET_IF_WIDTH_BYTES))
   buffer.io.stream.in <> io.in
 
