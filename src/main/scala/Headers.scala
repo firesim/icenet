@@ -15,27 +15,51 @@ object NetworkHelpers {
   def ntohs(a: UInt) = reverse_bytes(a, 2)
 }
 
+/**
+ * Ethernet header class that is of fixed size with conversion functions.
+ */
 class EthernetHeader extends Bundle {
   val ethType = UInt(ETH_TYPE_BITS.W)
   val srcmac  = UInt(ETH_MAC_BITS.W)
   val dstmac  = UInt(ETH_MAC_BITS.W)
   val padding = UInt(ETH_PAD_BITS.W)
 
-  def toWords(w: Int = NET_IF_WIDTH) =
-    Vec(ETH_HEAD_BYTES * 8 / w, UInt(w.W)).fromBits(this.asUInt)
-
-  def fromWords(words: Seq[UInt], w: Int = NET_IF_WIDTH) = {
-    val headerWords = ETH_HEAD_BYTES * 8 / w
-    this.fromBits(Cat(words.take(headerWords).reverse))
+  /**
+   * This function converts the ethernet header to a vec of size W chunks
+   * @param w size of chunks to break the header into in bytes
+   * @return Vec of headerWords by w
+   */
+  def toWords(w: Int) = {
+    val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8) / w
+    this.asUInt.asTypeOf(Vec(headerWords, UInt(w.W)))
   }
+
+  /**
+   * This function converts from a Vec an ethernet header
+   * @param w size of chunks to remake the header (in bytes)
+   * @return Ethernet header
+   */
+  def fromWords(words: Seq[UInt], w: Int) = {
+    val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8) / w
+    Cat(words.take(headerWords).reverse).asTypeOf(this)
+  }
+
+  override def cloneType = (new EthernetHeader).asInstanceOf[this.type]
 }
 
+/**
+ * Companion object to create the EthernetHeader and connect it properly
+ */
 object EthernetHeader {
   def apply(dstmac: UInt, srcmac: UInt, ethType: UInt) = {
     val header = Wire(new EthernetHeader)
     header.dstmac := dstmac
     header.srcmac := srcmac
     header.ethType := ethType
+
+    //AJG: TODO: Added this to compile. Is this OK?
+    header.padding := DontCare
+
     header
   }
 }

@@ -6,13 +6,13 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.StreamIO
 import IceNetConsts._
 
-class Aligner extends Module {
-  val io = IO(new StreamIO(NET_IF_WIDTH))
+class Aligner(netConfig: IceNetConfig) extends Module {
+  val io = IO(new StreamIO(netConfig.NET_IF_WIDTH_BITS))
 
-  val data = RegInit(0.U(NET_IF_WIDTH.W))
-  val keep = RegInit(0.U(NET_IF_BYTES.W))
+  val data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W))
+  val keep = RegInit(0.U(netConfig.NET_IF_WIDTH_BYTES.W))
   val last = RegInit(false.B)
-  val nbytes = RegInit(0.U(log2Ceil(NET_IF_BYTES + 1).W))
+  val nbytes = RegInit(0.U(log2Ceil(netConfig.NET_IF_WIDTH_BYTES + 1).W))
 
   assert(!io.in.valid || io.in.bits.keep.orR,
     "Aligner cannot handle an empty flit")
@@ -25,22 +25,22 @@ class Aligner extends Module {
   val bitmask = FillInterleaved(8, keep)
   val full_data = ((io.in.bits.data >> rshift_bit) << nbits) | (data & bitmask)
   val full_nbytes = PopCount(full_keep)
-  val fwd_last = io.in.bits.last && (full_keep >> NET_IF_BYTES.U) === 0.U
+  val fwd_last = io.in.bits.last && (full_keep >> netConfig.NET_IF_WIDTH_BYTES.U) === 0.U
 
   io.out.valid := (last && nbytes > 0.U) ||
-                  (io.in.valid && (fwd_last || full_nbytes >= NET_IF_BYTES.U))
-  io.out.bits.data := Mux(last, data, full_data(NET_IF_WIDTH-1, 0))
-  io.out.bits.keep := Mux(last, keep, full_keep(NET_IF_BYTES-1, 0))
+                  (io.in.valid && (fwd_last || full_nbytes >= netConfig.NET_IF_WIDTH_BYTES.U))
+  io.out.bits.data := Mux(last, data, full_data(netConfig.NET_IF_WIDTH_BITS-1, 0))
+  io.out.bits.keep := Mux(last, keep, full_keep(netConfig.NET_IF_WIDTH_BYTES-1, 0))
   io.out.bits.last := last || fwd_last
 
-  io.in.ready := full_nbytes < NET_IF_BYTES.U ||
+  io.in.ready := full_nbytes < netConfig.NET_IF_WIDTH_BYTES.U ||
                  (io.out.ready && !last)
 
   when (io.in.fire() && io.out.fire()) {
-    data := full_data >> NET_IF_WIDTH.U
-    keep := full_keep >> NET_IF_BYTES.U
+    data := full_data >> netConfig.NET_IF_WIDTH_BITS.U
+    keep := full_keep >> netConfig.NET_IF_WIDTH_BYTES.U
     last := io.in.bits.last && !fwd_last
-    nbytes := Mux(fwd_last, 0.U, full_nbytes - NET_IF_BYTES.U)
+    nbytes := Mux(fwd_last, 0.U, full_nbytes - netConfig.NET_IF_WIDTH_BYTES.U)
   } .elsewhen (io.in.fire()) {
     data := full_data
     keep := full_keep
@@ -54,34 +54,34 @@ class Aligner extends Module {
   }
 }
 
-class AlignerTest extends UnitTest {
-  val inData = Vec(
+class AlignerTest(testWidth: Int = 64) extends UnitTest {
+  val inData = VecInit(
     "h0011223344556677".U,
     "h8899AABBCCDDEEFF".U,
     "h0123456789ABCDEF".U,
     "hFEDCBA9876543210".U)
-  val inKeep = Vec(
+  val inKeep = VecInit(
     "b11111100".U,
     "b01111000".U,
     "b00001111".U,
     "b11110000".U)
-  val inLast = Vec(false.B, false.B, true.B, true.B)
+  val inLast = VecInit(false.B, false.B, true.B, true.B)
 
-  val outData = Vec(
+  val outData = VecInit(
     "hBBCC001122334455".U,
     "h000089ABCDEF99AA".U,
     "h00000000FEDCBA98".U)
-  val outKeep = Vec(
+  val outKeep = VecInit(
     "b11111111".U,
     "b00111111".U,
     "b00001111".U)
-  val outLast = Vec(false.B, true.B, true.B)
+  val outLast = VecInit(false.B, true.B, true.B)
 
   val started = RegInit(false.B)
   val sending = RegInit(false.B)
   val receiving = RegInit(false.B)
 
-  val aligner = Module(new Aligner)
+  val aligner = Module(new Aligner(new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)))
 
   val (inIdx, inDone) = Counter(aligner.io.in.fire(), inData.size)
   val (outIdx, outDone) = Counter(aligner.io.out.fire(), outData.size)
