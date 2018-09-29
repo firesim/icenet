@@ -538,13 +538,13 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   }
 }
 
-class NICIOvonly(intfWidth: Int) extends Bundle {
-  val in = Flipped(Valid(new StreamChannel(intfWidth)))
-  val out = Valid(new StreamChannel(intfWidth))
+class NICIOvonly(ifWidth: Int) extends Bundle {
+  val in = Flipped(Valid(new StreamChannel(ifWidth)))
+  val out = Valid(new StreamChannel(ifWidth))
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings)
 
-  override def cloneType = (new NICIOvonly(intfWidth)).asInstanceOf[this.type]
+  override def cloneType = (new NICIOvonly(ifWidth)).asInstanceOf[this.type]
 }
 
 object NICIOvonly {

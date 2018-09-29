@@ -6,6 +6,10 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.StreamIO
 import IceNetConsts._
 
+/**
+ * Description of the Aligner class
+ * @param netConfig configuration parameters for network
+ */
 class Aligner(netConfig: IceNetConfig) extends Module {
   val io = IO(new StreamIO(netConfig.NET_IF_WIDTH_BITS))
 
@@ -54,6 +58,10 @@ class Aligner(netConfig: IceNetConfig) extends Module {
   }
 }
 
+/**
+ * Unit test for Aligner class
+ * @param testWidth size of the network interface for test
+ */
 class AlignerTest(testWidth: Int = 64) extends UnitTest {
   val inData = VecInit(
     "h0011223344556677".U,

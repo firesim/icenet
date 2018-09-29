@@ -7,6 +7,11 @@ import scala.util.Random
 import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
+/**
+ * Description of BufferBRAM class
+ * @param n size of buffer
+ * @param typ type of data to store
+ */
 class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   val addrBits = log2Ceil(n)
   val io = IO(new Bundle {
@@ -233,6 +238,11 @@ class NetworkPacketBufferTest(testWidth: Int = 64) extends UnitTest(100000) {
   io.finished := started && !sending && !buffer.io.stream.out.valid
 }
 
+/** 
+ * Description of class
+ * @param nXacts number of transactions
+ * @param nWords number of words
+ */
 class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
@@ -244,6 +254,11 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
     new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
+/** 
+ * Description of class
+ * @param nXacts number of transactions
+ * @param ifWidth size of the flit
+ */
 class ReservationBufferData(nXacts: Int, ifWidth: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
 
@@ -254,6 +269,12 @@ class ReservationBufferData(nXacts: Int, ifWidth: Int) extends Bundle {
     new ReservationBufferData(nXacts, ifWidth).asInstanceOf[this.type]
 }
 
+/**
+ * Description of class
+ * @param nXacts number of transactions
+ * @param nWords number of words
+ * @param ifWidth size of flit
+ */
 class ReservationBuffer(nXacts: Int, nWords: Int, ifWidth: Int) extends Module {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
