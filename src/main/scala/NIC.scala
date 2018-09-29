@@ -29,6 +29,9 @@ case class NICConfig(
 
 case object NICKey extends Field[NICConfig]
 
+/**
+ * The send io for the NIC
+ */
 class IceNicSendIO(implicit p: Parameters) extends Bundle {
   val req = Decoupled(UInt(p(NICKey).NET_IF_WIDTH_BITS.W))
   val comp = Flipped(Decoupled(Bool()))
@@ -36,6 +39,9 @@ class IceNicSendIO(implicit p: Parameters) extends Bundle {
   override def cloneType = (new IceNicSendIO).asInstanceOf[this.type]
 }
 
+/**
+ * The recieve io for the NIC
+ */
 class IceNicRecvIO(implicit p: Parameters) extends Bundle {
   val req = Decoupled(UInt(p(NICKey).NET_IF_WIDTH_BITS.W))
   val comp = Flipped(Decoupled(UInt(p(NICKey).NET_LEN_BITS.W)))
@@ -43,6 +49,9 @@ class IceNicRecvIO(implicit p: Parameters) extends Bundle {
   override def cloneType = (new IceNicRecvIO).asInstanceOf[this.type]
 }
 
+/**
+ * IO bundle to send and recieve from the NIC
+ */
 trait IceNicControllerBundle extends Bundle {
   implicit val p: Parameters
   val send = new IceNicSendIO
@@ -50,19 +59,25 @@ trait IceNicControllerBundle extends Bundle {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
 
+/** 
+ * Controller module that fits in between the NIC and the CPU memory.
+ * This sets up the structures to do MMIO using TL. It sends the addresses
+ * for the NIC to read from memory and write to memory
+ */
 trait IceNicControllerModule extends HasRegMap {
   implicit val p: Parameters
   val io: IceNicControllerBundle
 
   val sendCompDown = WireInit(false.B)
 
-  val intfWidth = p(NICKey).NET_IF_WIDTH_BITS
+  val addrWidthBits = 64
   val intfLenBits = p(NICKey).NET_LEN_BITS
   val qDepth = p(NICKey).ctrlQueueDepth
+
   // hold (len, addr) of packets that we need to send out
-  val sendReqQueue = Module(new Queue(UInt(intfWidth.W), qDepth))
+  val sendReqQueue = Module(new Queue(UInt(addrWidthBits.W), qDepth))
   // hold addr of buffers we can write received packets into
-  val recvReqQueue = Module(new Queue(UInt(intfWidth.W), qDepth))
+  val recvReqQueue = Module(new Queue(UInt(addrWidthBits.W), qDepth))
   // count number of sends completed
   val sendCompCount = TwoWayCounter(io.send.comp.fire(), sendCompDown, qDepth)
   // hold length of received packets
@@ -85,9 +100,10 @@ trait IceNicControllerModule extends HasRegMap {
     (sendCompValid, true.B)
   }
 
+  // Setup MMIO for controller
   regmap(
-    0x00 -> Seq(RegField.w(intfWidth, sendReqQueue.io.enq)),
-    0x08 -> Seq(RegField.w(intfWidth, recvReqQueue.io.enq)),
+    0x00 -> Seq(RegField.w(addrWidthBits, sendReqQueue.io.enq)),
+    0x08 -> Seq(RegField.w(addrWidthBits, recvReqQueue.io.enq)),
     0x10 -> Seq(RegField.r(1, sendCompRead)),
     0x12 -> Seq(RegField.r(intfLenBits, recvCompQueue.io.deq)),
     0x14 -> Seq(
@@ -98,9 +114,14 @@ trait IceNicControllerModule extends HasRegMap {
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)))
 }
 
+/**
+ * Params class for Ice NIC Controller
+ * @param address address to use for MMIO
+ * @param beatBytes size of beat for TL
+ */
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
 
-/*
+/**
  * Take commands from the CPU over TL2, expose as Queues
  */
 class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
