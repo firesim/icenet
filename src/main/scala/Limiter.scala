@@ -6,6 +6,9 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.SerialIO
 import IceNetConsts._
 
+/**
+ * This specifies the particular settings to limit the bandwidth of the NIC.
+ */
 class RateLimiterSettings extends Bundle {
   val incBits = log2Ceil(RLIMIT_MAX_INC)
   val periodBits = log2Ceil(RLIMIT_MAX_PERIOD)
@@ -22,6 +25,13 @@ class RateLimiterSettings extends Bundle {
   val size = UInt(sizeBits.W)
 }
 
+/**
+ * Functional block that throttles the bandwidth of the NIC. Uses a counter that is decremented
+ * everytime a flit is sent. This counter is incremented by k every p cycles providing a bandwidth
+ * of k/p * normal rate.
+ *
+ * @param typ type of data to be limited
+ */
 class RateLimiter[T <: Data](typ: T) extends Module {
   val incBits = log2Ceil(RLIMIT_MAX_INC)
   val periodBits = log2Ceil(RLIMIT_MAX_PERIOD)
@@ -62,6 +72,9 @@ class RateLimiter[T <: Data](typ: T) extends Module {
   }
 }
 
+/**
+ * Companion object to RateLimiter class
+ */
 object RateLimiter {
   def apply[T <: Data](in: DecoupledIO[T], inc: Int, period: Int, size: Int) = {
     if (period > 1) {
@@ -75,6 +88,9 @@ object RateLimiter {
   }
 }
 
+/**
+ * Unit test for RateLimiter class
+ */
 class RateLimiterTest extends UnitTest {
   val nFlits = 48
   val started = RegInit(false.B)

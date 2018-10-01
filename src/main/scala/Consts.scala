@@ -26,9 +26,10 @@ object IceNetConsts {
 
 /**
  * Main constants that govern the network itself
+ * @param NET_IF_WIDTH_BITS flit size in bits
+ * @param NET_LEN_BITS size of the ...
  */
 case class IceNetConfig(
-  // This is the flit size in bits
   val NET_IF_WIDTH_BITS: Int = 64,
   val NET_LEN_BITS: Int = 16
 ){

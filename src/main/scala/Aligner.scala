@@ -7,7 +7,14 @@ import testchipip.StreamIO
 import IceNetConsts._
 
 /**
- * Description of the Aligner class
+ * This functional block is used to align the data read in from the reservation buffer. Specifically, the data read in from memory is aligned by
+ * 8B blocks. However, the packet data may start at a different memory address that is not at a multiple of 8B. Thus, this aligner must shift this
+ * read in data to send out only the data from the packet (and not any other gibberish data).
+ *
+ * Ex. 
+ *    Start memAddr of Packet Data: 0x4
+ *    Data in reservation buffer starts at 0x0 and goes to 8B to 0x7
+ *    Aligner fixes this by starting the read from the reservation buffer at 0x4
  * @param netConfig configuration parameters for network
  */
 class Aligner(netConfig: IceNetConfig) extends Module {
@@ -18,8 +25,7 @@ class Aligner(netConfig: IceNetConfig) extends Module {
   val last = RegInit(false.B)
   val nbytes = RegInit(0.U(log2Ceil(netConfig.NET_IF_WIDTH_BYTES + 1).W))
 
-  assert(!io.in.valid || io.in.bits.keep.orR,
-    "Aligner cannot handle an empty flit")
+  assert(!io.in.valid || io.in.bits.keep.orR, "Aligner cannot handle an empty flit")
 
   val rshift = PriorityEncoder(io.in.bits.keep)
   val full_keep = ((io.in.bits.keep >> rshift) << nbytes) | keep

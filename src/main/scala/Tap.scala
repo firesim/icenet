@@ -9,7 +9,8 @@ import testchipip._
 import IceNetConsts._
 
 /**
- * Create a network tap.
+ * Create a network tap that filters out particular packets to another hardware module.
+ *
  * @param selectFunc function to select the ...
  * @param headerType class representing the header
  * @param headerBypes size of the header class in bytes
@@ -111,6 +112,9 @@ class NetworkTap[T <: Data](
   when (body_fire && io.inflow.bits.last) { state := s_inflow_header }
 }
 
+/**
+ * Unit test for NetworkTap
+ */
 class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
   val sendPayloads = Seq(
     Seq(0L, 0x800L << 48, 23L, 13L, 56L, 12L),

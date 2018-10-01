@@ -14,6 +14,17 @@ import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.math.max
 import IceNetConsts._
 
+/**
+ * Configuration class to setup the NIC
+ *
+ * @param NET_IF_WIDTH_BITS flit size in bits
+ * @param NET_LEN_BITS ...
+ * @param inBufPackets ...
+ * @param nMemXacts ...
+ * @param maxAcquireBytes ...
+ * @param ctrlQueueDepth ...
+ * @param tapFunc function used to route packets to different hardware module
+ */
 case class NICConfig(
   NET_IF_WIDTH_BITS: Int = 64,
   NET_LEN_BITS: Int = 16,
@@ -25,12 +36,15 @@ case class NICConfig(
     val NET_IF_WIDTH_BYTES = NET_IF_WIDTH_BITS / 8
     def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
     val outBufFlits = 2 * ETH_MAX_BYTES / NET_IF_WIDTH_BYTES
-  }
+}
 
+/**
+ * Case object to extend fields of NICConfig
+ */
 case object NICKey extends Field[NICConfig]
 
 /**
- * The send io for the NIC
+ * Send IO for the NIC
  */
 class IceNicSendIO(implicit p: Parameters) extends Bundle {
   val req = Decoupled(UInt(p(NICKey).NET_IF_WIDTH_BITS.W))
@@ -40,7 +54,7 @@ class IceNicSendIO(implicit p: Parameters) extends Bundle {
 }
 
 /**
- * The recieve io for the NIC
+ * Receive IO for the NIC
  */
 class IceNicRecvIO(implicit p: Parameters) extends Bundle {
   val req = Decoupled(UInt(p(NICKey).NET_IF_WIDTH_BITS.W))
@@ -50,7 +64,7 @@ class IceNicRecvIO(implicit p: Parameters) extends Bundle {
 }
 
 /**
- * IO bundle to send and recieve from the NIC
+ * IO bundle for sending/receiving from the NIC
  */
 trait IceNicControllerBundle extends Bundle {
   implicit val p: Parameters
@@ -61,8 +75,9 @@ trait IceNicControllerBundle extends Bundle {
 
 /** 
  * Controller module that fits in between the NIC and the CPU memory.
- * This sets up the structures to do MMIO using TL. It sends the addresses
- * for the NIC to read from memory and write to memory
+ * This sets up the structures to do MMIO using TL. It uses 4 queues to communicate
+ * what addresses to read/put packet data and to signal completion. Also setup interrupts 
+ * when a completion queue is ready.
  */
 trait IceNicControllerModule extends HasRegMap {
   implicit val p: Parameters
@@ -74,13 +89,14 @@ trait IceNicControllerModule extends HasRegMap {
   val intfLenBits = p(NICKey).NET_LEN_BITS
   val qDepth = p(NICKey).ctrlQueueDepth
 
-  // hold (len, addr) of packets that we need to send out
+  // Hold (len, addr) of packets that we need to send out
   val sendReqQueue = Module(new Queue(UInt(addrWidthBits.W), qDepth))
-  // hold addr of buffers we can write received packets into
+  // Hold addr of buffers we can write received packets into
   val recvReqQueue = Module(new Queue(UInt(addrWidthBits.W), qDepth))
-  // count number of sends completed
+
+  // Count number of sends completed
   val sendCompCount = TwoWayCounter(io.send.comp.fire(), sendCompDown, qDepth)
-  // hold length of received packets
+  // Hold length of received packets
   val recvCompQueue = Module(new Queue(UInt(intfLenBits.W), qDepth))
 
   val sendCompValid = sendCompCount > 0.U
@@ -131,6 +147,10 @@ class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
       new TLRegBundle(c, _)    with IceNicControllerBundle)(
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
+/**
+ * Send path is the combination of elements that make up the path for the NIC to send data over the
+ * network. It consists of the reservation packet buffer, aligner, reader, and rate limiter.
+ */
 class IceNicSendPath(implicit p: Parameters) extends LazyModule {
   val reader = LazyModule(new IceNicReader)
   val node = TLIdentityNode()
@@ -161,7 +181,7 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
   }
 }
 
-/*
+/**
  * Send frames out
  */
 class IceNicReader(implicit p: Parameters)
@@ -171,6 +191,10 @@ class IceNicReader(implicit p: Parameters)
   lazy val module = new IceNicReaderModule(this)
 }
 
+/**
+ * Module to read data from the CPU memory based off the addresses and length given in 
+ * the send request queue from the controller.
+ */
 class IceNicReaderModule(outer: IceNicReader)
     extends LazyModuleImp(outer) {
 
@@ -311,6 +335,10 @@ class IceNicWriter(implicit p: Parameters) extends LazyModule {
   lazy val module = new IceNicWriterModule(this)
 }
 
+/**
+ * Module to write the recieved packets from the network to the CPU memory based off
+ * the addresses given in the receive request queue in the controller.
+ */
 class IceNicWriterModule(outer: IceNicWriter)
     extends LazyModuleImp(outer) {
 
@@ -410,6 +438,10 @@ class IceNicRecvPath(implicit p: Parameters) extends LazyModule {
   lazy val module = new IceNicRecvPathModule(this)
 }
 
+/**
+ * Receive path is the combination of elements that make up the path for the NIC to send data to the CPU from the network.
+ * It consists of the network packet buffer, writer, and network tap. 
+ */
 class IceNicRecvPathModule(outer: IceNicRecvPath)
     extends LazyModuleImp(outer) {
   val config = p(NICKey)
@@ -436,6 +468,11 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   } .getOrElse { buffer.io.stream.out }
 }
 
+/** 
+ * Class to specify the NIC IO
+ *
+ * @param ifWidth flit size in bits
+ */
 class NICIO(ifWidth: Int) extends StreamIO(ifWidth) {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings)

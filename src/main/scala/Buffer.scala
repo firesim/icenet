@@ -43,7 +43,8 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 }
 
 /**
- * Creates a network packet buffer.
+ * Creates a network packet buffer that is used to store the packets gotten from the network.
+ * This structure will drop a entire packet if there is not enough space to hold all of the packet.
  * @param nPackets number of packets to send over the network
  * @param maxBytes max size in bytes of the packet
  * @param headerBytes size of the header in bytes
@@ -270,7 +271,9 @@ class ReservationBufferData(nXacts: Int, ifWidth: Int) extends Bundle {
 }
 
 /**
- * Description of class
+ * This functional block is used between the reader and the aligner blocks. It is used to make sure that all 
+ * reads for the packet from the CPU memory are completed and ordered properly (since reads can complete out of order)
+ * so that the aligner can recieve a packet in proper order.
  * @param nXacts number of transactions
  * @param nWords number of words
  * @param ifWidth size of flit
