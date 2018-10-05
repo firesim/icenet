@@ -26,6 +26,7 @@ class EthernetHeader extends Bundle {
 
   /**
    * This function converts the ethernet header to a vec of size W chunks
+   *
    * @param w size of chunks to break the header into in bytes
    * @return Vec of headerWords by w
    */
@@ -36,6 +37,7 @@ class EthernetHeader extends Bundle {
 
   /**
    * This function converts from a Vec an ethernet header
+   *
    * @param w size of chunks to remake the header (in bytes)
    * @return Ethernet header
    */

@@ -12,6 +12,7 @@ import IceNetConsts._
 
 /**
  * Buffer to ...
+ *
  * @param typ type of item that the buffer stores
  * @param n size of the buffer
  */
@@ -42,15 +43,16 @@ class DistributionBuffer[T <: Data](typ: T, n: Int) extends Module {
 
 /** 
  * Simple router that ...
+ *
  * @param id id of the router
  * @param n size of the router
- * @param ifWidth flit size that the router can handle
+ * @param ifWidthBits flit size that the router can handle
  */
-class SimpleSwitchRouter(id: Int, n: Int, ifWidth: Int) extends Module {
+class SimpleSwitchRouter(id: Int, n: Int, ifWidthBits: Int) extends Module {
   val io = IO(new Bundle {
     val header = Flipped(Valid(new EthernetHeader))
-    val in = Flipped(Decoupled(new StreamChannel(ifWidth)))
-    val out = Vec(n, Decoupled(new StreamChannel(ifWidth)))
+    val in = Flipped(Decoupled(new StreamChannel(ifWidthBits)))
+    val out = Vec(n, Decoupled(new StreamChannel(ifWidthBits)))
     val tcam = new TCAMMatchIO(n, ETH_MAC_BITS)
   })
 
@@ -61,7 +63,7 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidth: Int) extends Module {
   val route = Reg(UInt(n.W))
 
   val buffer = Module(new DistributionBuffer(
-    new StreamChannel(ifWidth), n))
+    new StreamChannel(ifWidthBits), n))
 
   io.tcam.data := dstmac
   io.out <> buffer.io.out
@@ -92,18 +94,19 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidth: Int) extends Module {
 
 /**
  * Simple crossbar class
+ *
  * @param n size of the crossbar
- * @param ifWidth flit size that the crossbar can handle
+ * @param ifWidthBits flit size that the crossbar can handle
  */
-class SimpleSwitchCrossbar(n: Int, ifWidth: Int) extends Module {
+class SimpleSwitchCrossbar(n: Int, ifWidthBits: Int) extends Module {
   val io = IO(new Bundle {
     val headers = Flipped(Vec(n, Valid(new EthernetHeader)))
-    val in = Flipped(Vec(n, Decoupled(new StreamChannel(ifWidth))))
-    val out = Vec(n, Decoupled(new StreamChannel(ifWidth)))
+    val in = Flipped(Vec(n, Decoupled(new StreamChannel(ifWidthBits))))
+    val out = Vec(n, Decoupled(new StreamChannel(ifWidthBits)))
     val tcam = Vec(n, new TCAMMatchIO(n, ETH_MAC_BITS))
   })
 
-  val routers = Seq.tabulate(n) { i => Module(new SimpleSwitchRouter(i, n, ifWidth)) }
+  val routers = Seq.tabulate(n) { i => Module(new SimpleSwitchRouter(i, n, ifWidthBits)) }
 
   for (i <- 0 until n) {
     val r = routers(i)
@@ -114,7 +117,7 @@ class SimpleSwitchCrossbar(n: Int, ifWidth: Int) extends Module {
 
   for (i <- 0 until n) {
     val arb = Module(new HellaPeekingArbiter(
-      new StreamChannel(ifWidth), n,
+      new StreamChannel(ifWidthBits), n,
       (ch: StreamChannel) => ch.last, rr = true))
     arb.io.in <> routers.map(r => r.io.out(i))
     io.out(i) <> arb.io.out
@@ -123,6 +126,7 @@ class SimpleSwitchCrossbar(n: Int, ifWidth: Int) extends Module {
 
 /** 
  * Simple switch
+ *
  * @param address address used to tell where the switch is located
  * @param n size of the switch
  * @param netConfig class specifying the input parameters (flitsize, etc)
@@ -336,9 +340,9 @@ class BroadcastTestSender(mac: Long, netConfig: IceNetConfig) extends Module {
   when (sendDone) { state := s_done }
 }
 
-class BroadcastTestReceiver(srcmac: Long, ifWidth: Int) extends Module {
+class BroadcastTestReceiver(srcmac: Long, ifWidthBits: Int) extends Module {
   val io = IO(new Bundle {
-    val net = new StreamIO(ifWidth)
+    val net = new StreamIO(ifWidthBits)
     val finished = Output(Bool())
   })
 
@@ -353,7 +357,7 @@ class BroadcastTestReceiver(srcmac: Long, ifWidth: Int) extends Module {
   io.finished := state === s_done
 
   val expectedHeader = EthernetHeader(ETH_BCAST_MAC, srcmac.U, 0.U)
-  val expectedPacket = VecInit(expectedHeader.toWords(ifWidth) ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
+  val expectedPacket = VecInit(expectedHeader.toWords(ifWidthBits) ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
   val (recvCnt, recvDone) = Counter(
     io.net.in.fire(), expectedPacket.size)
 

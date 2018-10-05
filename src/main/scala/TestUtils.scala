@@ -6,6 +6,13 @@ import scala.math.max
 import testchipip.StreamChannel
 import IceNetConsts._
 
+/**
+ * Helper class to ...
+ *
+ * @param lengths ...
+ * @param genData ...
+ * @param netConsts ...
+ */
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
@@ -49,11 +56,20 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig
   io.out.bits.last := pktOffset === lengthVec(pktIdx) - 1.U
 }
 
+/**
+ * Helper class to check the data input
+ *
+ * @param checkData the required data to check
+ * @param checkKeep the keep bytemask 
+ * @param checkLast the last indicator for the bytes sent 
+ * @param netConsts the configuration settings 
+ */
 class PacketCheck(
     checkData: Seq[BigInt],
     checkKeep: Seq[Int],
     checkLast: Seq[Boolean],
     netConsts: IceNetConfig) extends Module {
+
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH_BITS)))
     val finished = Output(Bool())
@@ -73,10 +89,11 @@ class PacketCheck(
   when (checkDone) { finished := true.B }
 
   def compareData(a: UInt, b: UInt, keep: UInt) = {
-    val bitmask = FillInterleaved(8, keep)
+    val bitmask = FillInterleaved(8, keep) //Expand bitmask to bytemask
     (a & bitmask) === (b & bitmask)
   }
 
+  // Everything should match (data, keep and last bits)
   assert(!io.in.valid ||
     (compareData(io.in.bits.data, checkDataVec(checkIdx), io.in.bits.keep) &&
       io.in.bits.keep === checkKeepVec(checkIdx) &&

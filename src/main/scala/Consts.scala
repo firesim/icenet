@@ -26,13 +26,15 @@ object IceNetConsts {
 
 /**
  * Main constants that govern the network itself
+ * 
  * @param NET_IF_WIDTH_BITS flit size in bits
- * @param NET_LEN_BITS size of the ...
+ * @param NET_LEN_BITS size in bits of the network packet length
  */
 case class IceNetConfig(
   val NET_IF_WIDTH_BITS: Int = 64,
   val NET_LEN_BITS: Int = 16
 ){
+  // This is a bytemask to indicate which bytes should be kept
   def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
   // This is the flit size in bytes
   def NET_IF_WIDTH_BYTES: Int = NET_IF_WIDTH_BITS / 8

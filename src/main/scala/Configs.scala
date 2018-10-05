@@ -23,37 +23,19 @@ class WithIceNetUnitTestsDefault extends Config((site, here, up) => {
 })
 
 class WithIceNetUnitTestsAll extends Config((site, here, up) => {
-  case NICKey => NICConfig(NET_IF_WIDTH_BITS = 64)
+  case NICKey => NICConfig(NET_IF_WIDTH_BITS = 128)
   case UnitTests => (p: Parameters) => {
-    Seq(
-      Module(new NetworkPacketBufferTest(64)),
-      Module(new NetworkPacketBufferTest(128)),
-      Module(new NetworkPacketBufferTest(256)),
-      Module(new NetworkPacketBufferTest(512)),
-      Module(new CreditTrackerTest(64)),
-      Module(new CreditTrackerTest(128)),
-      Module(new CreditTrackerTest(256)),
-      Module(new CreditTrackerTest(512)),
-      Module(new BasicSwitchTestWrapper(64)(p)),
-      Module(new BasicSwitchTestWrapper(128)(p)),
-      Module(new BasicSwitchTestWrapper(256)(p)),
-      Module(new BasicSwitchTestWrapper(512)(p)),
-      Module(new BroadcastTestWrapper(64) (p)),
-      Module(new BroadcastTestWrapper(128)(p)),
-      Module(new BroadcastTestWrapper(256)(p)),
-      Module(new BroadcastTestWrapper(512)(p)),
-      Module(new NetworkTapTest(64)),
-      Module(new NetworkTapTest(128)),
-      Module(new NetworkTapTest(256)),
-      Module(new NetworkTapTest(512)),
-      Module(new RateLimiterTest),
-      Module(new AlignerTest(64)),
-      Module(new AlignerTest(128)),
-      Module(new AlignerTest(256)),
-      Module(new AlignerTest(512)),
-      Module(new IceNicSendTestWrapper()(p)),
-      Module(new IceNicRecvTestWrapper()(p)),
-      Module(new IceNicTestWrapper()(p)))
+    Seq(64, 128, 256, 512).flatMap( 
+       n => Seq( Module(new NetworkPacketBufferTest(n)),
+                 Module(new CreditTrackerTest(n)),
+                 Module(new BasicSwitchTestWrapper(n)(p)),
+                 Module(new BroadcastTestWrapper(n)(p)),
+                 Module(new NetworkTapTest(n)),
+                 Module(new AlignerTest(n)) )) ++
+    Seq( Module(new RateLimiterTest),
+         Module(new IceNicSendTestWrapper()(p)), //Note that the general tests use the NICConfig params
+         Module(new IceNicRecvTestWrapper()(p)),
+         Module(new IceNicTestWrapper()(p)) )
   }
 })
 

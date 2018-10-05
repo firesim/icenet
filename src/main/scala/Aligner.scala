@@ -15,6 +15,7 @@ import IceNetConsts._
  *    Start memAddr of Packet Data: 0x4
  *    Data in reservation buffer starts at 0x0 and goes to 8B to 0x7
  *    Aligner fixes this by starting the read from the reservation buffer at 0x4
+ *
  * @param netConfig configuration parameters for network
  */
 class Aligner(netConfig: IceNetConfig) extends Module {
@@ -66,6 +67,7 @@ class Aligner(netConfig: IceNetConfig) extends Module {
 
 /**
  * Unit test for Aligner class
+ *
  * @param testWidth size of the network interface for test
  */
 class AlignerTest(testWidth: Int = 64) extends UnitTest {

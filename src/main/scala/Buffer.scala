@@ -9,6 +9,7 @@ import IceNetConsts._
 
 /**
  * Description of BufferBRAM class
+ * 
  * @param n size of buffer
  * @param typ type of data to store
  */
@@ -45,6 +46,7 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 /**
  * Creates a network packet buffer that is used to store the packets gotten from the network.
  * This structure will drop a entire packet if there is not enough space to hold all of the packet.
+ *
  * @param nPackets number of packets to send over the network
  * @param maxBytes max size in bytes of the packet
  * @param headerBytes size of the header in bytes
@@ -172,6 +174,7 @@ class NetworkPacketBuffer[T <: Data](
 
 /**
  * Creates a network packet test.
+ *
  * @param testWidth flit size for the test
  */
 class NetworkPacketBufferTest(testWidth: Int = 64) extends UnitTest(100000) {
@@ -241,6 +244,7 @@ class NetworkPacketBufferTest(testWidth: Int = 64) extends UnitTest(100000) {
 
 /** 
  * Description of class
+ *
  * @param nXacts number of transactions
  * @param nWords number of words
  */
@@ -257,28 +261,30 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
 
 /** 
  * Description of class
+ *
  * @param nXacts number of transactions
- * @param ifWidth size of the flit
+ * @param ifWidthBits size of the flit
  */
-class ReservationBufferData(nXacts: Int, ifWidth: Int) extends Bundle {
+class ReservationBufferData(nXacts: Int, ifWidthBits: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
 
   val id = UInt(xactIdBits.W)
-  val data = new StreamChannel(ifWidth)
+  val data = new StreamChannel(ifWidthBits)
 
   override def cloneType =
-    new ReservationBufferData(nXacts, ifWidth).asInstanceOf[this.type]
+    new ReservationBufferData(nXacts, ifWidthBits).asInstanceOf[this.type]
 }
 
 /**
  * This functional block is used between the reader and the aligner blocks. It is used to make sure that all 
  * reads for the packet from the CPU memory are completed and ordered properly (since reads can complete out of order)
  * so that the aligner can recieve a packet in proper order.
+ *
  * @param nXacts number of transactions
  * @param nWords number of words
- * @param ifWidth size of flit
+ * @param ifWidthBits size of flit
  */
-class ReservationBuffer(nXacts: Int, nWords: Int, ifWidth: Int) extends Module {
+class ReservationBuffer(nXacts: Int, nWords: Int, ifWidthBits: Int) extends Module {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
 
@@ -286,8 +292,8 @@ class ReservationBuffer(nXacts: Int, nWords: Int, ifWidth: Int) extends Module {
 
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(new ReservationBufferAlloc(nXacts, nWords)))
-    val in = Flipped(Decoupled(new ReservationBufferData(nXacts, ifWidth)))
-    val out = Decoupled(new StreamChannel(ifWidth))
+    val in = Flipped(Decoupled(new ReservationBufferData(nXacts, ifWidthBits)))
+    val out = Decoupled(new StreamChannel(ifWidthBits))
   })
 
   def incWrap(cur: UInt, inc: UInt): UInt = {
@@ -295,7 +301,7 @@ class ReservationBuffer(nXacts: Int, nWords: Int, ifWidth: Int) extends Module {
     Mux(unwrapped >= nWords.U, unwrapped - nWords.U, unwrapped)
   }
 
-  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(ifWidth)))
+  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(ifWidthBits)))
   val bufValid = RegInit(0.U(nWords.W))
 
   val head = RegInit(0.U(countBits.W))
