@@ -26,6 +26,7 @@ class Aligner(netConfig: IceNetConfig) extends Module {
   val last = RegInit(false.B)
   val nbytes = RegInit(0.U(log2Ceil(netConfig.NET_IF_WIDTH_BYTES + 1).W))
 
+  // AJG: Should this be andR (was originally orR)
   assert(!io.in.valid || io.in.bits.keep.orR, "Aligner cannot handle an empty flit")
 
   val rshift = PriorityEncoder(io.in.bits.keep)

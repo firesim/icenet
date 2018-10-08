@@ -43,6 +43,13 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   io.read.data := Mux(rbypass, rbypass_data, rread_data)
 }
 
+class DataKeepType(val w: Int) extends Bundle {
+  val data = UInt(w.W)
+  val keep = UInt((w/8).W)
+
+  override def cloneType = new DataKeepType(w).asInstanceOf[this.type]
+}
+
 /**
  * Creates a network packet buffer that is used to store the packets gotten from the network.
  * This structure will drop a entire packet if there is not enough space to hold all of the packet.
@@ -74,9 +81,10 @@ class NetworkPacketBuffer[T <: Data](
     val count = Output(UInt(log2Ceil(nPackets+1).W))
   })
 
-  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR, "NetworkPacketBuffer does not handle missing data")
+  // Should this be andR or orR. If valid = true then there should be a byte to keep
+  assert(!io.stream.in.valid || io.stream.in.bits.keep.orR, "NetworkPacketBuffer does not handle missing data")
 
-  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, Bits(wordBits.W))) }
+  val buffers = Seq.fill(nPackets) { Module(new BufferBRAM(maxWords, new DataKeepType(wordBits))) }
   val headers = Seq.fill(nPackets) { Reg(Vec(headerWords, Bits(wordBits.W))) }
   val bufLengths = Seq.fill(nPackets) { RegInit(0.U(idxBits.W)) }
   val bufValid = VecInit(bufLengths.map(len => len > 0.U))
@@ -97,14 +105,18 @@ class NetworkPacketBuffer[T <: Data](
   val hwen = wen && inIdx < headerWords.U
 
   val outPhaseReg = RegEnable(outPhase, ren)
-  val outDataReg = VecInit(buffers.map(buffer => buffer.io.read.data))(outPhaseReg)
+  val outDataReg = VecInit(buffers.map(buffer => buffer.io.read.data.data))(outPhaseReg)
+  val outKeepReg = VecInit(buffers.map(buffer => buffer.io.read.data.keep))(outPhaseReg)
   val outLastReg = RegEnable(outLast(outPhase), ren)
   val outIdxReg = RegEnable(outIdx, ren)
 
   io.stream.out.valid := outValidReg
   io.stream.out.bits.data := outDataReg
   io.stream.out.bits.last := outLastReg
-  io.stream.out.bits.keep := DontCare
+  
+  // AJG: This needs to be the amt of data that is valid
+  io.stream.out.bits.keep := outKeepReg 
+
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := outHeader(outPhase)
@@ -128,7 +140,8 @@ class NetworkPacketBuffer[T <: Data](
     buffer.io.read.addr := outIdx
     buffer.io.write.en := wen && inPhase === i.U
     buffer.io.write.addr := inIdx
-    buffer.io.write.data := io.stream.in.bits.data
+    buffer.io.write.data.data := io.stream.in.bits.data
+    buffer.io.write.data.keep := io.stream.in.bits.keep
 
     when (inPhase === i.U) {
       when (bufLenSet) { bufLen := inIdx + 1.U }
