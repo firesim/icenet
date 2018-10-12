@@ -7,8 +7,8 @@ import testchipip.StreamIO
 import IceNetConsts._
 
 /**
- * This functional block is used to take an input stream and shift it's input by a input amount in 
- * bytes.
+ * This functional block is used to take an input stream and shift it's input by a certain amount in 
+ * bytes. This shifting includes it's "keep" values and making sure that the last value is kept.
  *
  * @param netConfig the config parameters for the NIC
  * @param addrOffsetBytes the amount of offset that you have to shift left
@@ -19,189 +19,90 @@ class AlignToAddr(netConfig: IceNetConfig, addrOffsetBytes: UInt) extends Module
 
   // Note: These masks add extra bits since << adds and doesn't cut off
   val addrOffsetBits = addrOffsetBytes * 8.U
-  val upperMaskBits = ~0.U(netConfig.NET_IF_WIDTH_BITS.W) << addrOffsetBits // keep the upper bits
-  val lowerMaskBits = ~upperMaskBits // keep the lower bits
+  val upperMaskBits = ~0.U(netConfig.NET_IF_WIDTH_BITS.W) << addrOffsetBits
+  val lowerMaskBits = ~upperMaskBits
   val upperMaskKeep = ~0.U(netConfig.NET_IF_WIDTH_BYTES.W) << addrOffsetBytes
-  val lowerMaskKeep = ~upperMaskKeep // keep the upper bits
+  val lowerMaskKeep = ~upperMaskKeep
 
   // Data to be sent when ready
   val send_data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W)) //data to be sent when ready
   val send_keep = RegInit(0.U(netConfig.NET_IF_WIDTH_BYTES.W))
+  // Data held for next round of sending
   val backup_data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W)) //data storage for next round
   val backup_keep = RegInit(0.U(netConfig.NET_IF_WIDTH_BYTES.W))
-  val lastDelayOne = RegNext(io.in.bits.last)
-  val lastDelayTwo = RegNext(lastDelayOne)
   val validDelayOne = RegNext(io.in.valid)
 
-  val iovalid = io.in.valid
-  val iodata = io.in.bits.data
-  val iokeep = io.in.bits.keep
-  val iolast = io.in.bits.last
-
+  // Rotated data that is used for moving data to right positions
   val rotated_data = (io.in.bits.data << addrOffsetBits) | (io.in.bits.data >> (netConfig.NET_IF_WIDTH_BITS.U - addrOffsetBits))
   val rotated_keep = (io.in.bits.keep << addrOffsetBytes) | (io.in.bits.keep >> (netConfig.NET_IF_WIDTH_BYTES.U - addrOffsetBytes))
 
-  printf( "--- DUT DEBUG ---\n" )
-  printf( p"DUT: back_data(0x${Hexadecimal(backup_data)}) back_keep(0x${Hexadecimal(backup_keep)})\n" )
-  printf( p"DUT: send_data(0x${Hexadecimal(send_data)}) send_keep(0x${Hexadecimal(send_keep)})\n" )
-  printf( p"DUT: rota_data(0x${Hexadecimal(rotated_data)}) rotated_keep(0x${Hexadecimal(rotated_keep)})\n" )
-  printf( p"DUT: validDelayOne($validDelayOne)\n" )// lastDelayOne($lastDelayOne) lastDelayTwo($lastDelayTwo)\n" )
-  when(iovalid){
-    printf( p"DUT: in: data(0x${Hexadecimal(iodata)}) keep(0x${Hexadecimal(iokeep)}) last(${iolast})\n" )
-  }
+  val leftToSendBytes = RegInit(0.U((2*log2Ceil(netConfig.NET_IF_WIDTH_BYTES)).W))
+  val outputSendBytes = PopCount(send_keep)
+  val doneWithOutput = (leftToSendBytes <= outputSendBytes)
 
-  // if the bottom of the back_keep is 0 then this is the last if lastDelayOne is also high
-  // Depending if the offset prevents the last thing from showing
-  //val send_last = Mux(addrOffsetBytes === 0.U, lastDelayOne, 
-  //                Mux((backup_keep & lowerMaskKeep) === 0.U, lastDelayOne, lastDelayTwo))
-
-  val overflow = io.in.valid && ((PriorityEncoder(~io.in.bits.keep) +& addrOffsetBytes) > netConfig.NET_IF_WIDTH_BYTES.U)
-  when(overflow){
-    printf( "DUT: There is overflow\n" )
-  }
-  .otherwise{
-    printf( "DUT: There is no overflow\n" )
-  }
-  val markLast = RegInit(false.B)
-  val markLast2 = RegInit(false.B)
-  val addition = PriorityEncoder(~io.in.bits.keep) +& addrOffsetBytes
-  val against = netConfig.NET_IF_WIDTH_BYTES.U 
-  printf( p"DUT: markLast($markLast) markLast2($markLast2)\n" )
+  // TODO: Cleanup block to remove this logic
+  val send_last = RegInit(false.B)
+  val backup_last = RegInit(false.B)
   when( io.in.fire() ){
     when ( PriorityEncoder(~io.in.bits.keep) +& addrOffsetBytes <= netConfig.NET_IF_WIDTH_BYTES.U ){
-      printf(p"DUT: Less: $addition <= $against\n")
-      markLast := io.in.bits.last | markLast2
-      markLast2 := false.B
+      send_last := io.in.bits.last | backup_last
+      backup_last := false.B
     }
     .otherwise{
-      printf(p"DUT: Greater: $addition > $against\n")
-      markLast := markLast2
-      markLast2 := io.in.bits.last
+      send_last := backup_last
+      backup_last := io.in.bits.last
     }
   }
   .otherwise{
     // When IO does not fire make sure to continue moving the mark down
-    printf("DUT: Move markLast2 => markLast\n" )
-    markLast := markLast2
-    markLast2 := false.B
+    send_last := backup_last
+    backup_last := false.B
   }
 
-  val send_last = markLast
+  // Check if the last flag has been seen (cleared when there are no more bytes to send for the current shift)
+  val hasSeenLast = RegInit(false.B)
+  hasSeenLast := Mux(io.in.valid && io.in.bits.last, true.B, Mux(doneWithOutput, false.B, hasSeenLast))
+
+  io.in.ready := doneWithOutput || !hasSeenLast // Ready to read in new data when no more bytes to read and you haven't seen last signal
 
   io.out.bits.data := send_data
   io.out.bits.keep := send_keep
-  
-  //io.out.bits.last := send_last 
+  // TODO: Clean up the io.out.valid signal
+  io.out.valid := send_last || validDelayOne // There should always be an output after 1 delay or if there is a send_last signal
+  io.out.bits.last := doneWithOutput // Send last signal when there are no more bytes to send
 
-  // TODO: WHEN SHOULD YOU READ IN DATA?
-  val isCurrentLast = io.in.valid && io.in.bits.last
-  val leftToSendBytes = RegInit(0.U((2*log2Ceil(netConfig.NET_IF_WIDTH_BYTES)).W))
-  val outputSendBytes = PopCount(send_keep)
-  val doneWithOutput = (leftToSendBytes <= outputSendBytes)
-  printf( p"DUT: leftToSend($leftToSendBytes) outputSend($outputSendBytes)\n" )
-  when(io.out.fire() && io.in.fire()){
-    when(outputSendBytes > leftToSendBytes + PopCount(io.in.bits.keep)){
-      printf("DUT: LTS <= 0\n")
-      leftToSendBytes := 0.U
-    }
-    .otherwise{
-      printf("DUT: add and sub to LTS\n")
-      leftToSendBytes := leftToSendBytes + PopCount(io.in.bits.keep) - outputSendBytes
-    }
-  }
-  .elsewhen(io.in.fire()){
-    printf( "DUT: addition to leftToSend\n" )
-    leftToSendBytes := leftToSendBytes + PopCount(io.in.bits.keep)
-  }
-  .elsewhen(io.out.fire()){
-    when(outputSendBytes > leftToSendBytes){
-      printf("zero LTS\n")
-      leftToSendBytes := 0.U
-    }
-    .otherwise{
-      printf("sub from LTS\n")
-      leftToSendBytes := leftToSendBytes - outputSendBytes
-    }
-  }
-
-  val hasSeenLast = RegInit(false.B)
-  when( isCurrentLast ){
-    hasSeenLast := true.B
-  }
-  .otherwise{
-    when(doneWithOutput){
-      hasSeenLast := false.B
-    }
-    .otherwise{
-      hasSeenLast := hasSeenLast
-    }
-  }
-  io.out.valid := send_last || validDelayOne
-  //io.out.valid := doneWithOutput && hasSeenLast
-  io.in.ready := (leftToSendBytes <= outputSendBytes) || !hasSeenLast//isCurrentLast
-
-  io.out.bits.last := (leftToSendBytes <= outputSendBytes)
-  //io.in.ready := (io.out.ready)
-
-  val outvalid = io.out.valid
-  val outdata = io.out.bits.data
-  val outkeep = io.out.bits.keep
-  val outlast = io.out.bits.last
-  when(outvalid){
-    printf( p"DUT: out: valid($outvalid) data(0x${Hexadecimal(outdata)}) keep(0x${Hexadecimal(outkeep)}) last(${outlast})\n" )
-  }
-
-  // NOTE: They will fire without losing data 
   when (io.in.fire() && io.out.fire()) {
-    // When something immediately goes through the pipeline
-    printf( "DUT: io.in/out fire\n" )
+    // When something enters and something else leaves
     send_data := (backup_data & lowerMaskBits) | (rotated_data & upperMaskBits)
     backup_data := (0.U & upperMaskBits) | (rotated_data & lowerMaskBits) 
     send_keep := (backup_keep & lowerMaskKeep) | (rotated_keep & upperMaskKeep)
     backup_keep := (0.U & upperMaskKeep) | (rotated_keep & lowerMaskKeep) 
-
-    // if(overflow)
-    //    if (lastitem)
-    //      update backup to 0
-    //      update send to read backup by not rotated
-    //      stall the ready bit by 1
-    //    else
-    //      do the normal
-    // else
-    //    do the normal
-    //if you go over, stall next read input by 1
+    leftToSendBytes := Mux(outputSendBytes > leftToSendBytes + PopCount(io.in.bits.keep), 0.U, leftToSendBytes + PopCount(io.in.bits.keep) - outputSendBytes)
   }
   .elsewhen (io.in.fire()) {
     // When something comes in and nothing goes out yet
-    // I don't think this case should happen since you are dependent on the output
-    printf( "DUT: io.in fire\n" )
     send_data := (backup_data & lowerMaskBits) | (rotated_data & upperMaskBits)
     backup_data := (0.U & upperMaskBits) | (rotated_data & lowerMaskBits) 
     send_keep := (backup_keep & lowerMaskKeep) | (rotated_keep & upperMaskKeep)
     backup_keep := (0.U & upperMaskKeep) | (rotated_keep & lowerMaskKeep) 
+    leftToSendBytes := leftToSendBytes + PopCount(io.in.bits.keep)
   }
   .elsewhen (io.out.fire()) {
     // When something is output from the pipeline but nothing is put in thus make the next values 0
-    printf( "DUT: io.out fire\n" )
     send_data := (backup_data & lowerMaskBits)
     backup_data := 0.U
     send_keep := (backup_keep & lowerMaskKeep)
     backup_keep := 0.U
+    leftToSendBytes := Mux(outputSendBytes > leftToSendBytes, 0.U, leftToSendBytes - outputSendBytes)
   }
-
-  printf( "--- DUT DEBUG DONE ---\n\n" )
 }
 
-// TODO: THIS DECSRIPTION IS NOT EXACTLY TRUE FIX
 /**
- * This functional block is used to align the data read in from the reservation buffer. Specifically, the data read in from memory is aligned by
- * 8B blocks. However, the packet data may start at a different memory address that is not at a multiple of 8B. Thus, this aligner must shift this
- * read in data to send out only the data from the packet (and not any other gibberish data).
- *
- * Ex. 
- *    Start memAddr of Packet Data: 0x4
- *    Data in reservation buffer starts at 0x0 and goes to 8B to 0x7
- *    Aligner fixes this by starting the read from the reservation buffer at 0x4
+ * This functional block is used to align the data read in from the reservation buffer. Specifically, the data
+ * read in from memory is aligned by 8B. However, two issues occur. 1. The packet data may start at a different
+ * memory address that is not at a multiple of 8B. 2. The packet may have invalid data within it. Thus, this
+ * aligner must shift this read in data and remove all invalid data to send out only the valid data from the 
+ * packet (and not any other gibberish data).
  *
  * @param netConfig configuration parameters for network
  */
@@ -326,12 +227,12 @@ class AlignerTest(testWidth: Int = 64) extends UnitTest {
 }
 
 /**
- * Unit test for Aligner class
+ * Unit test for AlignDataToAddr class
  *
  * @param testWidth size of the network interface for test
  */
 class AlignDataToAddrTest(testWidth: Int = 64) extends UnitTest {
-  // Send three packets worth of information
+  // Send multiple packets worth of information
   val inData = VecInit( "h0011223344556677".U, "h8899AABBCCDDEEFF".U, "h0123456789ABCDEF".U,
                         "h7766554433221100".U,
                         "hFEDCBA9876543210".U,
@@ -382,28 +283,6 @@ class AlignDataToAddrTest(testWidth: Int = 64) extends UnitTest {
   aligner.io.in.bits.last := inLast(inIdx)
   aligner.io.out.ready := receiving
   
-  val valid = aligner.io.in.valid
-  val data = aligner.io.in.bits.data
-  val keep = aligner.io.in.bits.keep
-  val last = aligner.io.in.bits.last
-  val outvalid = aligner.io.out.valid
-  val outdata = aligner.io.out.bits.data
-  val outkeep = aligner.io.out.bits.keep
-  val outlast = aligner.io.out.bits.last
-  val outready = aligner.io.out.ready
-
-  printf( "--- TEST DEBUG ------------------------------------------------------------------------\n" )
-  when(aligner.io.in.valid){
-    printf( p"Test Input:  data(0x${Hexadecimal(data)}) keep(0x${Hexadecimal(keep)}) last($last)\n" )
-  }
-  val temp1 = outData(outIdx)
-  val temp2 = outKeep(outIdx)
-  val temp3 = outLast(outIdx)
-  when(aligner.io.out.valid){
-    printf( p"Test Output: data(0x${Hexadecimal(outdata)}) keep(0x${Hexadecimal(outkeep)}) last($outlast)\n" )
-    printf( p"Want Output: data(0x${Hexadecimal(temp1)}) keep(0x${Hexadecimal(temp2)}) last($temp3)\n" )
-  }
-
   when (io.start && !started) {
     started := true.B
     sending := true.B
@@ -418,7 +297,6 @@ class AlignDataToAddrTest(testWidth: Int = 64) extends UnitTest {
     val bitmask = FillInterleaved(8, keep)
     (a & bitmask) === (b & bitmask)
   }
-  printf( "--- TEST DEBUG DONE ---\n\n" )
 
   assert(!aligner.io.out.valid ||
          (compareData( aligner.io.out.bits.data, outData(outIdx), aligner.io.out.bits.keep) &&
