@@ -425,7 +425,6 @@ class IceNicWriterModule(outer: IceNicWriter)
 
   // Sub extra bytes since the comp number is a multiple of flit size and you may send less than a flit
   val subBytesRecv = RegInit(0.U(addrBits.W))
-  //val bitmask = FillInterleaved(8, streamShifter.io.stream.out.bits.keep)
 
   // Output data over TL to CPU memory
   io.recv.req.ready := state === s_idle
@@ -442,15 +441,9 @@ class IceNicWriterModule(outer: IceNicWriter)
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecv
 
-  // AJG: Debugging
-  when(tl.a.fire()){
-    printf("[0x%x] <-- data(0x%x) bitmask(0x%x)\n", toAddress, streamShifter.io.stream.out.bits.data, streamShifter.io.stream.out.bits.keep)
-  }
-
   when (io.recv.req.fire()) {
     idx := 0.U
     baseAddr := io.recv.req.bits >> byteAddrBits.U
-    printf("RECV Q FIRE: baseAddr(0x%x) = io.recv.req.queue(0x%x)>>%d | maskOffset(0x%x)\n", baseAddr, io.recv.req.bits, byteAddrBits.U, maskOffset)
     addrOffset := io.recv.req.bits & maskOffset
     beatsLeft := 0.U
     state := s_data
@@ -469,8 +462,6 @@ class IceNicWriterModule(outer: IceNicWriter)
     idx := idx + 1.U
     when (streamShifter.io.stream.out.bits.last) { 
       subBytesRecv := addrOffset + PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
-      printf( "subBytesRecv(%d)=addrOffset(%d)-popCount(fullKeep(0x%x)-subKeep(0x%x))\n", subBytesRecv, addrOffset, config.NET_FULL_KEEP, streamShifter.io.stream.out.bits.keep)
-
       state := s_complete 
     }
   }

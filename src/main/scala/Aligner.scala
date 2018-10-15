@@ -43,73 +43,11 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
   val doneWithOutput = (leftToSendBytes <= outputSendBytes)
 
   val inValidDelayOne = RegNext(io.stream.in.valid)
-  val processingLast = RegInit(false.B)
-
-  //when(io.stream.out.valid || io.stream.in.valid || leftToSendBytes > 0.U){
-  //  printf("---DUT START---\n")
-  //  printf("rotated: shiftAmtBytes(%d) data(0x%x) keep(0x%x)\n", io.addrOffsetBytes, rotated_data, rotated_keep)
-  //  printf("send:   data(0x%x) keep(0x%x)\n", send_data, send_keep)
-  //  printf("backup: data(0x%x) keep(0x%x)\n", backup_data, backup_keep)
-  //  printf("leftToSend(%d) outputSend(%d)\n", leftToSendBytes, outputSendBytes)
-  //  when(io.stream.in.valid){
-  //    printf("DUT IN: data(0x%x) keep(0x%x) last(%d)\n", io.stream.in.bits.data, io.stream.in.bits.keep, io.stream.in.bits.last)
-  //  }
-  //  when(io.stream.out.valid){
-  //    printf("DUT OUT: data(0x%x) keep(0x%x) last(%d)\n", io.stream.out.bits.data, io.stream.out.bits.keep, io.stream.out.bits.last)
-  //  }
-  //  printf("inValidDelayOne(%d) processingLast(%d)\n", inValidDelayOne, processingLast)
-  //  when(io.stream.in.fire()){
-  //    printf("--> in.fire\n")
-  //  }
-  //  when(io.stream.out.fire()){
-  //    printf("out.fire -->\n")
-  //  }
-  //  printf("---DUT END---\n")
-  //}
+  val processingLast = RegInit(false.B) // Flag indicating that a last flag has been seen and is in process of going to the output
 
   io.stream.in.ready := Mux(doneWithOutput, io.stream.out.ready, Mux(processingLast, false.B, io.stream.out.ready))
 
-  when(io.stream.in.fire()){
-    processingLast := io.stream.in.bits.last
-  }
-  .elsewhen(io.stream.out.fire()){
-    processingLast := Mux(io.stream.out.bits.last, false.B, processingLast)
-  }
-  //-----------------------------------
-  //for in.ready:
-  //-----------------------------------
-  //if doneWithOuput
-  //  if out.ready
-  //    true
-  //  else
-  //    false
-  //else 
-  //  if processingLast
-  //    wait until processingLast = false so false here
-  //  else
-  //    if out.ready
-  //      true
-  //    else
-  //      false
-  //-----------------------------------
-  //for processingLast:
-  //-----------------------------------
-  //if in.fire
-  //  in.last
-  //else if out.fire
-  //  if out.last
-  //    false
-  //  else 
-  //    processingLast // dont want to make it true since it may not be true to begin with
-  //if in.fire and out.fire
-  //  in.last    0 1
-  //
-  //  out.last 0 0 1
-  //           1 0 1
-  //-----------------------------------
-
-  io.stream.out.valid := inValidDelayOne || processingLast || leftToSendBytes > 0.U
-
+  io.stream.out.valid := inValidDelayOne || processingLast || (leftToSendBytes > 0.U)
   io.stream.out.bits.data := send_data
   io.stream.out.bits.keep := send_keep
   io.stream.out.bits.last := doneWithOutput // Send last signal when there are no more bytes to send
@@ -129,6 +67,7 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
     send_keep := (backup_keep & lowerMaskKeep) | (rotated_keep & upperMaskKeep)
     backup_keep := (0.U & upperMaskKeep) | (rotated_keep & lowerMaskKeep) 
     leftToSendBytes := leftToSendBytes + PopCount(io.stream.in.bits.keep)
+    processingLast := io.stream.in.bits.last
   }
   .elsewhen (io.stream.out.fire()) {
     // When something is output from the pipeline but nothing is put in thus make the next values 0
@@ -137,6 +76,7 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
     send_keep := (backup_keep & lowerMaskKeep)
     backup_keep := 0.U
     leftToSendBytes := Mux(outputSendBytes > leftToSendBytes, 0.U, leftToSendBytes - outputSendBytes)
+    processingLast := Mux(io.stream.out.bits.last, false.B, processingLast)
   }
 }
 
@@ -326,19 +266,6 @@ class StreamShifterTest(testWidth: Int = 64) extends UnitTest {
   streamShifter.io.stream.in.bits.last := inLast(inIdx)
   streamShifter.io.stream.out.ready := receiving
   streamShifter.io.addrOffsetBytes := shiftByteAmount
-
-  //printf("---TESTER START-----------------------------------------------------------------------------------------\n")
-  //when(streamShifter.io.stream.out.ready){
-  //  printf("READY FOR RECV\n")
-  //}
-  //when(streamShifter.io.stream.in.fire()){
-  //  printf("IN: data(0x%x) keep(0x%x) last(%d)\n", streamShifter.io.stream.in.bits.data, streamShifter.io.stream.in.bits.keep, streamShifter.io.stream.in.bits.last)
-  //}
-  //when(streamShifter.io.stream.out.fire()){
-  //  printf("OUT: data(0x%x) keep(0x%x) last(%d)\n", streamShifter.io.stream.out.bits.data, streamShifter.io.stream.out.bits.keep, streamShifter.io.stream.out.bits.last)
-  //  printf("COR: data(0x%x) keep(0x%x) last(%d)\n", outData(outIdx), outKeep(outIdx), outLast(outIdx))
-  //}
-  //printf("---TESTER END---\n")
   
   when (io.start && !started) {
     started := true.B
