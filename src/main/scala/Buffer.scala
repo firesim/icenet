@@ -284,9 +284,7 @@ class ReservationBufferData(nXacts: Int, ifWidthBits: Int) extends Bundle {
   val id = UInt(xactIdBits.W)
   val data = new StreamChannel(ifWidthBits)
 
-  override def cloneType =
-    new ReservationBufferData(nXacts, ifWidthBits).asInstanceOf[this.type]
-}
+  override def cloneType = new ReservationBufferData(nXacts, ifWidthBits).asInstanceOf[this.type] }
 
 /**
  * This functional block is used between the reader and the aligner blocks. It is used to make sure that all 

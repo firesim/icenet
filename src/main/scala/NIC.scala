@@ -231,11 +231,6 @@ class IceNicReaderModule(outer: IceNicReader)
   val addrBits = tl.params.addressBits
   val lenBits = config.NET_LEN_BITS - 1
   val dataSendLen = config.mmioDataLenBits // the size of the data that is sent over mmap (64 bits are sent)
-  // TODO: Here the interface should be size 64 right since you are just getting the data from MMIO?
-  // or should this be the intfWidth since it is the actual data gotten
-  //                          ^ i dont think it should be this since the tl link is connected to the out
-  //
-  // here everything should be the addresslength
   val midPoint = dataSendLen - config.NET_LEN_BITS //indicator where the address is split into length and address
 
   // Select the bits associated with the different parts of the packet data sent over (aka get if it is a part, the len, and addr)
@@ -383,8 +378,19 @@ class IceNicWriterModule(outer: IceNicWriter)
   val byteAddrBits = log2Ceil(beatBytes) //the # of bits for the beatBytes
   val addrBits = fullAddrBits - byteAddrBits //address that is smaller by the beatBytes size
 
+  // Assumed that these are the same for the aligner to be correct
+  assert( beatBytes == config.NET_IF_WIDTH_BYTES, "TLWidth does not match IFWidth" )
+
   val s_idle :: s_data :: s_complete :: Nil = Enum(3)
   val state = RegInit(s_idle)
+
+  val addrOffset = RegInit(0.U(byteAddrBits.W))
+  val maskOffset = ~((~0.U(config.mmioDataLenBits.W)) << byteAddrBits.U)
+  val streamShifter = Module(new StreamShifter(new IceNetConfig(NET_IF_WIDTH_BITS=config.NET_IF_WIDTH_BITS)))
+
+  streamShifter.io.stream.in.valid := io.in.valid && (state === s_data)
+  streamShifter.io.stream.in.bits := io.in.bits
+  streamShifter.io.addrOffsetBytes := addrOffset
 
   val baseAddr = Reg(UInt(addrBits.W)) // base address of packet shifted by beatBytes
   val idx = Reg(UInt(addrBits.W)) // idx skipping over netIfWidth
@@ -419,34 +425,33 @@ class IceNicWriterModule(outer: IceNicWriter)
 
   // Sub extra bytes since the comp number is a multiple of flit size and you may send less than a flit
   val subBytesRecv = RegInit(0.U(addrBits.W))
-  val bitmask = FillInterleaved(8, io.in.bits.keep)
+  //val bitmask = FillInterleaved(8, streamShifter.io.stream.out.bits.keep)
 
   // Output data over TL to CPU memory
   io.recv.req.ready := state === s_idle
-  tl.a.valid := (state === s_data && io.in.valid) && canSend
-  // this will have a writemask of mask = something
+  tl.a.valid := ((state === s_data) && streamShifter.io.stream.out.valid) && canSend
   tl.a.bits := edge.Put(
     fromSource = fromSource,
     toAddress = toAddress,
     lgSize = lgSize,
-    data = io.in.bits.data & bitmask)._2
+    data = streamShifter.io.stream.out.bits.data,
+    mask = streamShifter.io.stream.out.bits.keep)._2
   tl.d.ready := xactBusy.orR
-  io.in.ready := state === s_data && canSend && tl.a.ready
+  io.in.ready := (state === s_data) && canSend && streamShifter.io.stream.in.ready
+  streamShifter.io.stream.out.ready := (state === s_data) && canSend && tl.a.ready
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecv
 
   // AJG: Debugging
-  when(tl.a.valid){
-    val nicOut = io.in.bits.data & bitmask
-    printf( p"Output from NIC: (0x${Hexadecimal(nicOut)})\n" )
-    printf( p"toAddress(0x${Hexadecimal(toAddress)}) newBlock($newBlock) addrMerged(0x${Hexadecimal(addrMerged)}) headAddr(0x${Hexadecimal(headAddr)})\n" )
+  when(tl.a.fire()){
+    printf("[0x%x] <-- data(0x%x) bitmask(0x%x)\n", toAddress, streamShifter.io.stream.out.bits.data, streamShifter.io.stream.out.bits.keep)
   }
 
-  val recvAddr = io.recv.req.bits
   when (io.recv.req.fire()) {
     idx := 0.U
     baseAddr := io.recv.req.bits >> byteAddrBits.U
-    printf( p"baseAddr(0x${Hexadecimal(baseAddr)}) recv.req.queue(0x${Hexadecimal(recvAddr)})>>$byteAddrBits\n" )
+    printf("RECV Q FIRE: baseAddr(0x%x) = io.recv.req.queue(0x%x)>>%d | maskOffset(0x%x)\n", baseAddr, io.recv.req.bits, byteAddrBits.U, maskOffset)
+    addrOffset := io.recv.req.bits & maskOffset
     beatsLeft := 0.U
     state := s_data
   }
@@ -462,11 +467,10 @@ class IceNicWriterModule(outer: IceNicWriter)
       beatsLeft := beatsLeft - 1.U
     }
     idx := idx + 1.U
-    when (io.in.bits.last) { 
-      val subKeep = io.in.bits.keep
-      val fullKeep = config.NET_FULL_KEEP
-      subBytesRecv := PopCount(config.NET_FULL_KEEP) - PopCount(io.in.bits.keep)
-      printf( p"subBytesRecv($subBytesRecv)=popCount( fullKeep(0x${Hexadecimal(fullKeep)})-subKeep(0x${Hexadecimal(subKeep)}) )\n" )
+    when (streamShifter.io.stream.out.bits.last) { 
+      subBytesRecv := addrOffset + PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
+      printf( "subBytesRecv(%d)=addrOffset(%d)-popCount(fullKeep(0x%x)-subKeep(0x%x))\n", subBytesRecv, addrOffset, config.NET_FULL_KEEP, streamShifter.io.stream.out.bits.keep)
+
       state := s_complete 
     }
   }
