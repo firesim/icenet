@@ -43,11 +43,11 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
   val doneWithOutput = (leftToSendBytes <= outputSendBytes)
 
   val inValidDelayOne = RegNext(io.stream.in.valid)
-  val processingLast = RegInit(false.B) // Flag indicating that a last flag has been seen and is in process of going to the output
+  val processingLast = RegInit(false.B) // Indicates when a last flag is seen and the packet is finishing
 
   io.stream.in.ready := Mux(doneWithOutput, io.stream.out.ready, Mux(processingLast, false.B, io.stream.out.ready))
 
-  io.stream.out.valid := inValidDelayOne || processingLast || (leftToSendBytes > 0.U)
+  io.stream.out.valid := inValidDelayOne || processingLast || leftToSendBytes > 0.U
   io.stream.out.bits.data := send_data
   io.stream.out.bits.keep := send_keep
   io.stream.out.bits.last := doneWithOutput // Send last signal when there are no more bytes to send
@@ -59,6 +59,7 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
     send_keep := (backup_keep & lowerMaskKeep) | (rotated_keep & upperMaskKeep)
     backup_keep := (0.U & upperMaskKeep) | (rotated_keep & lowerMaskKeep) 
     leftToSendBytes := Mux(outputSendBytes > leftToSendBytes + PopCount(io.stream.in.bits.keep), 0.U, leftToSendBytes + PopCount(io.stream.in.bits.keep) - outputSendBytes)
+    processingLast := io.stream.in.bits.last
   }
   .elsewhen (io.stream.in.fire()) {
     // When something comes in and nothing goes out yet
@@ -266,7 +267,7 @@ class StreamShifterTest(testWidth: Int = 64) extends UnitTest {
   streamShifter.io.stream.in.bits.last := inLast(inIdx)
   streamShifter.io.stream.out.ready := receiving
   streamShifter.io.addrOffsetBytes := shiftByteAmount
-  
+
   when (io.start && !started) {
     started := true.B
     sending := true.B
