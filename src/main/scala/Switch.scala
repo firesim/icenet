@@ -11,7 +11,7 @@ import testchipip._
 import IceNetConsts._
 
 /**
- * Buffer to ...
+ * Description of DistributionBuffer
  *
  * @param typ type of item that the buffer stores
  * @param n size of the buffer
@@ -42,7 +42,7 @@ class DistributionBuffer[T <: Data](typ: T, n: Int) extends Module {
 }
 
 /** 
- * Simple router that ...
+ * Description of SimpleSwitchRouter
  *
  * @param id id of the router
  * @param n size of the router
@@ -82,7 +82,8 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidthBits: Int) extends Module {
     when (dstmac.andR) {
       route := ~0.U(n.W) ^ (1 << id).U
       state := s_forward
-    } .otherwise {
+    }
+    .otherwise {
       route := UIntToOH(io.tcam.addr)
       state := Mux(io.tcam.found, s_forward, s_drop)
     }
@@ -93,7 +94,7 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidthBits: Int) extends Module {
 }
 
 /**
- * Simple crossbar class
+ * Description of SimpleSwitchCrossbar
  *
  * @param n size of the crossbar
  * @param ifWidthBits flit size that the crossbar can handle
@@ -129,7 +130,7 @@ class SimpleSwitchCrossbar(n: Int, ifWidthBits: Int) extends Module {
  *
  * @param address address used to tell where the switch is located
  * @param n size of the switch
- * @param netConfig class specifying the input parameters (flitsize, etc)
+ * @param netConfig configuration parameters for network
  */
 class SimpleSwitch(address: BigInt, n: Int, netConfig: IceNetConfig)
     (implicit p: Parameters) extends LazyModule {

@@ -4,7 +4,16 @@ import chisel3._
 import chisel3.util._
 import IceNetConsts._
 
+/**
+ * Helper functions for reversing the bytes in a UInt
+ */
 object NetworkHelpers {
+  /**
+   * Reverse the bytes of a UInt
+   *
+   * @param a data to reverse
+   * @param n number of bytes to reverse
+   */
   def reverse_bytes(a: UInt, n: Int) = {
     val bytes = (0 until n).map(i => a((i + 1) * 8 - 1, i * 8))
     Cat(bytes)
@@ -30,8 +39,7 @@ class EthernetHeader extends Bundle {
    * @param w size of chunks to break the header into in bytes
    * @return Vec of headerWords by w
    */
-  def toWords(w: Int) = {
-    val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8) / w
+  def toWords(w: Int) = { val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8) / w
     this.asUInt.asTypeOf(Vec(headerWords, UInt(w.W)))
   }
 
@@ -58,14 +66,15 @@ object EthernetHeader {
     header.dstmac := dstmac
     header.srcmac := srcmac
     header.ethType := ethType
-
-    //AJG: TODO: Added this to compile. Is this OK?
     header.padding := DontCare
 
     header
   }
 }
 
+/**
+ * Implementation of a IPv4 Header
+ */
 class IPv4Header extends Bundle {
   val dest_ip = UInt(32.W)
   val source_ip = UInt(32.W)
@@ -83,6 +92,9 @@ class IPv4Header extends Bundle {
   val ihl = UInt(4.W)
 }
 
+/**
+ * Implementation of a UDPHeader
+ */
 class UDPHeader extends Bundle {
   val checksum = UInt(16.W)
   val length = UInt(16.W)

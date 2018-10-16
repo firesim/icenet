@@ -14,9 +14,12 @@ object IceNetConsts {
   val ETH_TYPE_BITS = 16
   val ETH_PAD_BITS = 16
 
+  // Size of specific header types
   val IPV4_HEAD_BYTES = 20
   val UDP_HEAD_BYTES = 8
 
+  // AJG: TODO: Can this be parameterized?
+  // Rate limiter settings
   val RLIMIT_MAX_INC = 256
   val RLIMIT_MAX_PERIOD = 256
   val RLIMIT_MAX_SIZE = 256
@@ -34,8 +37,6 @@ case class IceNetConfig(
   val NET_IF_WIDTH_BITS: Int = 64,
   val NET_LEN_BITS: Int = 16
 ){
-  // This is a bytemask to indicate which bytes should be kept
-  def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
-  // This is the flit size in bytes
-  def NET_IF_WIDTH_BYTES: Int = NET_IF_WIDTH_BITS / 8
+  def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W) // this is a bytemask to indicate which bytes should be kept
+  def NET_IF_WIDTH_BYTES: Int = NET_IF_WIDTH_BITS / 8 // this is the flit size in bytes
 }

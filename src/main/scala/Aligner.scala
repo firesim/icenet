@@ -8,52 +8,52 @@ import IceNetConsts._
 
 /**
  * This functional block is used to take an input stream and shift it's input by a certain amount in 
- * bytes. This shifting includes it's "keep" values and making sure that the last value is kept.
+ * bytes. This shifting includes it's "keep" values and making sure that the last flag corresponds to the
+ * end of the input stream correctly.
  *
- * @param netConfig the config parameters for the NIC
+ * @param netConfig configuration parameters for network
  */
 class StreamShifter(netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle{
-    val stream = new StreamIO(netConfig.NET_IF_WIDTH_BITS) //input stream of data
-    val addrOffsetBytes = Input(UInt(log2Ceil(netConfig.NET_IF_WIDTH_BYTES).W)) //amount to bytes to shift by
+    val stream = new StreamIO(netConfig.NET_IF_WIDTH_BITS) // input stream of data
+    val addrOffsetBytes = Input(UInt(log2Ceil(netConfig.NET_IF_WIDTH_BYTES).W)) // amount to bytes to shift by
   })
 
-  // Note: These masks add extra bits since << adds and doesn't cut off
+  // Note: these masks add extra bits since << adds and doesn't cut off
   val addrOffsetBits = io.addrOffsetBytes * 8.U
   val upperMaskBits = ~0.U(netConfig.NET_IF_WIDTH_BITS.W) << addrOffsetBits
   val lowerMaskBits = ~upperMaskBits
   val upperMaskKeep = ~0.U(netConfig.NET_IF_WIDTH_BYTES.W) << io.addrOffsetBytes
   val lowerMaskKeep = ~upperMaskKeep
 
-  // Data to be sent when ready
-  val send_data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W)) //data to be sent when ready
+  // data to be sent when ready
+  val send_data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W))
   val send_keep = RegInit(0.U(netConfig.NET_IF_WIDTH_BYTES.W))
-  // Data held for next round of sending
-  val backup_data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W)) //data storage for next round
+  // data held for next round of sending
+  val backup_data = RegInit(0.U(netConfig.NET_IF_WIDTH_BITS.W))
   val backup_keep = RegInit(0.U(netConfig.NET_IF_WIDTH_BYTES.W))
-  val validDelayOne = RegNext(io.stream.in.valid)
 
-  // Rotated data that is used for moving data to right positions
+  // rotated data that is used for moving data to right positions
   val rotated_data = (io.stream.in.bits.data << addrOffsetBits) | (io.stream.in.bits.data >> (netConfig.NET_IF_WIDTH_BITS.U - addrOffsetBits))
   val rotated_keep = (io.stream.in.bits.keep << io.addrOffsetBytes) | (io.stream.in.bits.keep >> (netConfig.NET_IF_WIDTH_BYTES.U - io.addrOffsetBytes))
 
-  // Keep track of how many bytes are in the aligner
+  // keep track of how many bytes are in the shifter 
   val leftToSendBytes = RegInit(0.U((2*log2Ceil(netConfig.NET_IF_WIDTH_BYTES)).W))
   val outputSendBytes = PopCount(send_keep)
   val doneWithOutput = (leftToSendBytes <= outputSendBytes)
 
   val inValidDelayOne = RegNext(io.stream.in.valid)
-  val processingLast = RegInit(false.B) // Indicates when a last flag is seen and the packet is finishing
+  val processingLast = RegInit(false.B) // indicates when a last flag is seen and the packet is finishing
 
   io.stream.in.ready := Mux(doneWithOutput, io.stream.out.ready, Mux(processingLast, false.B, io.stream.out.ready))
 
-  io.stream.out.valid := inValidDelayOne || processingLast || leftToSendBytes > 0.U
+  io.stream.out.valid := inValidDelayOne || processingLast || (leftToSendBytes > 0.U)
   io.stream.out.bits.data := send_data
   io.stream.out.bits.keep := send_keep
-  io.stream.out.bits.last := doneWithOutput // Send last signal when there are no more bytes to send
+  io.stream.out.bits.last := doneWithOutput // send last signal when there are no more bytes to send
 
   when (io.stream.in.fire() && io.stream.out.fire()) {
-    // When something enters and something else leaves
+    // when something enters and something else leaves
     send_data := (backup_data & lowerMaskBits) | (rotated_data & upperMaskBits)
     backup_data := (0.U & upperMaskBits) | (rotated_data & lowerMaskBits) 
     send_keep := (backup_keep & lowerMaskKeep) | (rotated_keep & upperMaskKeep)
@@ -62,7 +62,7 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
     processingLast := io.stream.in.bits.last
   }
   .elsewhen (io.stream.in.fire()) {
-    // When something comes in and nothing goes out yet
+    // when something comes in and nothing goes out yet
     send_data := (backup_data & lowerMaskBits) | (rotated_data & upperMaskBits)
     backup_data := (0.U & upperMaskBits) | (rotated_data & lowerMaskBits) 
     send_keep := (backup_keep & lowerMaskKeep) | (rotated_keep & upperMaskKeep)
@@ -71,7 +71,7 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
     processingLast := io.stream.in.bits.last
   }
   .elsewhen (io.stream.out.fire()) {
-    // When something is output from the pipeline but nothing is put in thus make the next values 0
+    // when something is output from the pipeline but nothing is put in thus make the next values 0
     send_data := (backup_data & lowerMaskBits)
     backup_data := 0.U
     send_keep := (backup_keep & lowerMaskKeep)
@@ -98,7 +98,7 @@ class Aligner(netConfig: IceNetConfig) extends Module {
   val last = RegInit(false.B)
   val nbytes = RegInit(0.U(log2Ceil(netConfig.NET_IF_WIDTH_BYTES + 1).W))
 
-  // AJG: Should this be andR (was originally orR)
+  // AJG: should this be andR (was originally orR)
   assert(!io.in.valid || io.in.bits.keep.orR, "Aligner cannot handle an empty flit")
 
   val rshift = PriorityEncoder(io.in.bits.keep)
@@ -121,8 +121,8 @@ class Aligner(netConfig: IceNetConfig) extends Module {
                  (io.out.ready && !last)
 
   when (io.in.fire() && io.out.fire()) {
-    data := full_data >> netConfig.NET_IF_WIDTH_BITS.U // Can get rid of NET_IF_WIDTH worth of data since done
-    keep := full_keep >> netConfig.NET_IF_WIDTH_BYTES.U // Can get rid of NET_IF_WIDTH worth of data since done
+    data := full_data >> netConfig.NET_IF_WIDTH_BITS.U // can get rid of NET_IF_WIDTH worth of data since done
+    keep := full_keep >> netConfig.NET_IF_WIDTH_BYTES.U // can get rid of NET_IF_WIDTH worth of data since done
     last := io.in.bits.last && !fwd_last
     nbytes := Mux(fwd_last, 0.U, full_nbytes - netConfig.NET_IF_WIDTH_BYTES.U)
   }
@@ -146,7 +146,7 @@ class Aligner(netConfig: IceNetConfig) extends Module {
  * @param testWidth size of the network interface for test
  */
 class AlignerTest(testWidth: Int = 64) extends UnitTest {
-  // Send two packets worth of information
+  // send two packets worth of information
   val inData = VecInit(
     "h0011223344556677".U,
     "h8899AABBCCDDEEFF".U,
@@ -159,7 +159,7 @@ class AlignerTest(testWidth: Int = 64) extends UnitTest {
     "b11110000".U)
   val inLast = VecInit(false.B, false.B, true.B, true.B)
 
-  // Output should have all valid bytes until the end
+  // output should have all valid bytes until the end
   val outData = VecInit(
     "hBBCC001122334455".U,
     "h000089ABCDEF99AA".U,
@@ -168,7 +168,7 @@ class AlignerTest(testWidth: Int = 64) extends UnitTest {
     "b11111111".U,
     "b00111111".U,
     "b00001111".U)
-  val outLast = VecInit(false.B, true.B, true.B) // Still should be two packets 
+  val outLast = VecInit(false.B, true.B, true.B) // still should be two packets 
 
   val started = RegInit(false.B)
   val sending = RegInit(false.B)
@@ -216,7 +216,7 @@ class AlignerTest(testWidth: Int = 64) extends UnitTest {
  * @param testWidth size of the network interface for test
  */
 class StreamShifterTest(testWidth: Int = 64) extends UnitTest {
-  // Send multiple packets worth of information
+  // send multiple packets worth of information
   val inData = VecInit( "h0011223344556677".U, "h8899AABBCCDDEEFF".U, "h0123456789ABCDEF".U,
                         "h7766554433221100".U,
                         "hFEDCBA9876543210".U,
@@ -233,7 +233,7 @@ class StreamShifterTest(testWidth: Int = 64) extends UnitTest {
                         true.B,
                         true.B )
 
-  // Output should have just shifted by 4B on everything
+  // output should have just shifted by 4B on everything
   val outData = VecInit( "h4455667700000000".U, "hCCDDEEFF00112233".U, "h89ABCDEF8899AABB".U,
                          "h3322110000000000".U,
                          "h7654321000000000".U,
@@ -266,14 +266,14 @@ class StreamShifterTest(testWidth: Int = 64) extends UnitTest {
   streamShifter.io.stream.in.bits.keep := inKeep(inIdx)
   streamShifter.io.stream.in.bits.last := inLast(inIdx)
   streamShifter.io.stream.out.ready := receiving
-  streamShifter.io.addrOffsetBytes := shiftByteAmount
+  streamShifter.io.addrOffsetBytes := shiftByteAmount // pass in shift amount
 
   when (io.start && !started) {
     started := true.B
     sending := true.B
     receiving := true.B
   }
-  //when (started && !outDone) { receiving := !receiving } // Test when the output is not ready immediately
+  // when (started && !outDone) { receiving := !receiving } // Test when the output is not ready immediately
   when (inDone) { sending := false.B }
   when (outDone) { receiving := false.B }
 

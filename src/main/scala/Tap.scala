@@ -39,7 +39,6 @@ class NetworkTap[T <: Data](
   val headerLen = Reg(UInt(idxBits.W))
   val bodyLess = Reg(Bool())
 
-  // AJG: States of the network tap
   val (s_inflow_header :: s_check_header ::
        s_passthru_header :: s_passthru_body ::
        s_tapout_header :: s_tapout_body :: Nil) = Enum(6)
@@ -50,7 +49,7 @@ class NetworkTap[T <: Data](
     s_passthru_body -> io.passthru.ready,
     s_tapout_body -> io.tapout.ready))
 
-  // AJG: Connect passthru signals to header signals
+  // connect passthru signals to header signals
   io.passthru.valid := MuxLookup(state, false.B, Seq(
     s_passthru_header -> true.B,
     s_passthru_body -> io.inflow.valid))
@@ -60,12 +59,9 @@ class NetworkTap[T <: Data](
   io.passthru.bits.last := MuxLookup(state, false.B, Seq(
     s_passthru_header -> (bodyLess && headerIdx === headerLen),
     s_passthru_body -> io.inflow.bits.last))
-
-  // AJG: TODO: Added this to compile. Is this OK? 
   io.passthru.bits.keep := DontCare
-  io.tapout.bits.keep := DontCare
 
-  // AJG: Connect tapout signals to header signals (identical to passthru)
+  // connect tapout signals to header signals (identical to passthru)
   io.tapout.valid := MuxLookup(state, false.B, Seq(
     s_tapout_header -> true.B,
     s_tapout_body -> io.inflow.valid))
@@ -75,8 +71,8 @@ class NetworkTap[T <: Data](
   io.tapout.bits.last := MuxLookup(state, false.B, Seq(
     s_tapout_header -> (bodyLess && headerIdx === headerLen),
     s_tapout_body -> io.inflow.bits.last))
+  io.tapout.bits.keep := DontCare
 
-  // AJG: State machine flow
   when (state === s_inflow_header && io.inflow.valid) {
     headerIdx := headerIdx + 1.U
     headerVec(headerIdx) := io.inflow.bits.data
@@ -91,7 +87,7 @@ class NetworkTap[T <: Data](
     }
   }
 
-  // AJG: When in check_header state, use passed in function to determine if it is a tapout or passthru
+  // when in check_header state, use passed in function to determine if it is a tapout or passthru
   when (state === s_check_header) {
     state := Mux(selectFunc(header), s_tapout_header, s_passthru_header)
   }

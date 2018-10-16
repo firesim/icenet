@@ -43,6 +43,11 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   io.read.data := Mux(rbypass, rbypass_data, rread_data)
 }
 
+/**
+ * Class representing data and keep values associated with it.
+ *
+ * @param w width of data in bits
+ */
 class DataKeepType(val w: Int) extends Bundle {
   val data = UInt(w.W)
   val keep = UInt((w/8).W)
@@ -113,8 +118,6 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.valid := outValidReg
   io.stream.out.bits.data := outDataReg
   io.stream.out.bits.last := outLastReg
-  
-  // AJG: This needs to be the amt of data that is valid
   io.stream.out.bits.keep := outKeepReg 
 
   io.stream.in.ready := true.B

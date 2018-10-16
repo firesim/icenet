@@ -48,7 +48,8 @@ class RateLimiter[T <: Data](typ: T) extends Module {
 
   when (counter === 0.U) {
     counter := io.settings.period
-  } .otherwise {
+  }
+  .otherwise {
     counter := counter - 1.U
   }
 
@@ -64,10 +65,12 @@ class RateLimiter[T <: Data](typ: T) extends Module {
   when (inc_trigger && io.out.fire()) {
     val next_tokens = tokens +& (io.settings.inc - 1.U)
     tokens := uint_min(next_tokens, io.settings.size)
-  } .elsewhen (inc_trigger) {
+  }
+  .elsewhen (inc_trigger) {
     val next_tokens = tokens +& io.settings.inc
     tokens := uint_min(next_tokens, io.settings.size)
-  } .elsewhen (io.out.fire()) {
+  }
+  .elsewhen (io.out.fire()) {
     tokens := tokens - 1.U
   }
 }
@@ -84,7 +87,8 @@ object RateLimiter {
       limiter.io.settings.period := (period - 1).U
       limiter.io.settings.size := size.U
       limiter.io.out
-    } else { in }
+    }
+    else { in }
   }
 }
 
