@@ -45,11 +45,9 @@ class CreditTracker(inCredits: Int, netConfig: IceNetConfig) extends Module {
   io.int.out.ready := out_space > 0.U && !send_credit_mess
   io.ext.out.valid := send_credit_mess || io.int.out.fire()
 
-  // AJG: TODO: Added this to compile. Is this OK?
-  io.ext.out.bits.keep := DontCare
-
   io.ext.out.bits.data := Mux(send_credit_mess,
     Cat(in_space_pending, true.B), io.int.out.bits.data)
+  io.ext.out.bits.keep := DontCare
   io.ext.out.bits.last := send_credit_mess || io.int.out.bits.last
 
   assert(!io.int.in.valid || io.int.in.ready,

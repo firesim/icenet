@@ -101,6 +101,7 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
+  // AJG: Make sure that there is no incorrectness given with the flit being larger than the header size
   val outHeader = VecInit(headers.map(header => Cat(header.reverse).asTypeOf(headerType)))
   val outLast = VecInit(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValidReg = RegInit(false.B)
@@ -148,7 +149,9 @@ class NetworkPacketBuffer[T <: Data](
 
     when (inPhase === i.U) {
       when (bufLenSet) { bufLen := inIdx + 1.U }
-      when (hwen) { header(inIdx) := io.stream.in.bits.data }
+      when (hwen) { 
+        header(inIdx) := io.stream.in.bits.data
+      }
     }
     when (outPhase === i.U) {
       when (bufLenClear) { bufLen := 0.U }
@@ -179,7 +182,8 @@ class NetworkPacketBuffer[T <: Data](
       when (!startDropping && !inDrop && !tooSmall) {
         inPhase := nextPhase
         bufLenSet := true.B
-      } .otherwise {
+      }
+      .otherwise {
         printf("WARNING: dropped packet with %d flits\n", inIdx + 1.U)
       }
       inIdx := 0.U
@@ -194,48 +198,53 @@ class NetworkPacketBuffer[T <: Data](
  * @param testWidth flit size for the test
  */
 class NetworkPacketBufferTest(testWidth: Int = 64) extends UnitTest(100000) {
-  val networkConfig = new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)
-  val ethWidthBytes = 8
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)
+  val ethHeaderBytes = ETH_HEAD_BYTES // size of the header in bytes
+  val flitSizeBytes = netConfig.NET_IF_WIDTH_BYTES
+  val flitsPerPacket = 8 // total amount of sub-packets per packet 
+  val nPackets = 64 // # of packets to send through the test
+  val maxBytesPerPacket = flitsPerPacket * flitSizeBytes
   val buffer = Module(new NetworkPacketBuffer(nPackets = 2,
-                                              maxBytes = 32,
-                                              headerBytes = ethWidthBytes,
-                                              headerType = UInt((ethWidthBytes*8).W),
-                                              wordBytes = networkConfig.NET_IF_WIDTH_BYTES))
+                                              maxBytes = maxBytesPerPacket,
+                                              headerBytes = ethHeaderBytes,
+                                              headerType = UInt((ethHeaderBytes*8).W),
+                                              wordBytes = flitSizeBytes))
   val rnd = new Random
-  val nPackets = 64
   val phaseBits = log2Ceil(nPackets)
-  val packetLengths = VecInit(Seq.fill(nPackets) { (2 + rnd.nextInt(6)).U(3.W) })
+  val packetLengths = VecInit(Seq.fill(nPackets) { (2 + rnd.nextInt(flitsPerPacket - 2)).U(log2Ceil(flitsPerPacket).W) }) // length of each packet from [2, flitsPerPacket)
 
-  val inLFSR = LFSR16(buffer.io.stream.in.fire())
+  val inLFSR = LFSR16(buffer.io.stream.in.fire()) // Create psuedo random numbers
   val outLFSR = LFSR16(buffer.io.stream.out.fire())
 
-  val inCountdown = RegInit(0.U(8.W))
+  // countdown timers
+  val inCountdown = RegInit(0.U(8.W)) 
   val outCountdown = RegInit(0.U(8.W))
 
   val inPhase = RegInit(0.U(phaseBits.W))
 
-  val inIdx = RegInit(0.U(3.W))
-  val outIdx = RegInit(0.U(3.W))
+  val inIdx = RegInit(0.U(log2Ceil(flitsPerPacket).W))
+  val outIdx = RegInit(0.U(log2Ceil(flitsPerPacket).W))
 
   val started = RegInit(false.B)
   val sending = RegInit(false.B)
 
-  buffer.io.stream.in.valid := sending && inCountdown === 0.U
-  buffer.io.stream.in.bits.data := inIdx
-  buffer.io.stream.in.bits.keep := ~0.U(32.W)
-  buffer.io.stream.in.bits.last := inIdx === packetLengths(inPhase)
-  buffer.io.stream.out.ready := outCountdown === 0.U
+  buffer.io.stream.in.valid := sending && inCountdown === 0.U // only valid if the random # generator indicates it to be true
+  buffer.io.stream.in.bits.data := inIdx // have data represent the order of the bits as input (to check that things are in order on output) 
+  buffer.io.stream.in.bits.keep := ~0.U(netConfig.NET_IF_WIDTH_BYTES.W) // keep everything
+  buffer.io.stream.in.bits.last := inIdx === packetLengths(inPhase) // if the length and idx are the same then it is the last
+  buffer.io.stream.out.ready := outCountdown === 0.U // only ready if the random # generator indicates it to be true
 
   when (io.start && !started) {
     started := true.B
     sending := true.B
   }
 
+  // countdown the time
   when (inCountdown > 0.U) { inCountdown := inCountdown - 1.U }
   when (outCountdown > 0.U) { outCountdown := outCountdown - 1.U }
 
   when (buffer.io.stream.in.fire()) {
-    inCountdown := inLFSR >> 8.U
+    inCountdown := inLFSR >> 8.U // random wait time to indicate valid
     inIdx := inIdx + 1.U
     when (buffer.io.stream.in.bits.last) {
       inIdx := 0.U
@@ -245,15 +254,27 @@ class NetworkPacketBufferTest(testWidth: Int = 64) extends UnitTest(100000) {
   }
 
   when (buffer.io.stream.out.fire()) {
-    outCountdown := outLFSR >> 8.U
+    outCountdown := outLFSR >> 8.U // randomly wait time to indicate ready
     outIdx := outIdx + 1.U
     when (buffer.io.stream.out.bits.last) { outIdx := 0.U }
   }
 
   assert(!buffer.io.stream.out.valid || buffer.io.stream.out.bits.data === outIdx,
     "NetworkPacketBufferTest: got output data out of order")
-  assert(!buffer.io.header.valid || buffer.io.header.bits === (1L << 32).U,
+
+  // If ethHeaderBytes == 16 then
+  //   and flitSizeBytes == 8 then
+  //     a 1 should be in the 2nd 8b of the header
+  //   and flitSizeBytes == 16, 32, 64 then
+  //     it should be 0 in the header since the 1 would be in the next flit
+  if (flitSizeBytes < ethHeaderBytes){
+    assert(!buffer.io.header.valid || ((buffer.io.header.bits >> (flitSizeBytes*8).U) === 1.U),
     "NetworkPacketBufferTest: unexpected header")
+  }
+  else {
+    assert(!buffer.io.header.valid || (buffer.io.header.bits === 0.U),
+    "NetworkPacketBufferTest: unexpected header")
+  }
 
   io.finished := started && !sending && !buffer.io.stream.out.valid
 }

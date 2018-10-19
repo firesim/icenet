@@ -15,7 +15,8 @@ import scala.math.max
 import IceNetConsts._
 
 /**
- * Configuration class to setup the NIC
+ * Configuration class to setup the NIC. This is configured by the user through
+ * the user configuration classes/traits.
  *
  * @param NET_IF_WIDTH_BITS flit size in bits
  * @param NET_LEN_BITS length of the packet (the amt of bits needed to send the length)
@@ -39,6 +40,11 @@ case class NICConfig(
     val NET_IF_WIDTH_BYTES = NET_IF_WIDTH_BITS / 8
     def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
     val outBufFlits = 2 * ETH_MAX_BYTES / NET_IF_WIDTH_BYTES
+
+    // default: set max size to flit size
+    val RLIMIT_MAX_INC = NET_IF_WIDTH_BITS
+    val RLIMIT_MAX_PERIOD = NET_IF_WIDTH_BITS
+    val RLIMIT_MAX_SIZE = NET_IF_WIDTH_BITS
 }
 
 /**
@@ -164,10 +170,15 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
   val config = p(NICKey)
 
   lazy val module = new LazyModuleImp(this) {
+    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
+                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+
     val io = IO(new Bundle {
       val send = Flipped(new IceNicSendIO)
       val out = Decoupled(new StreamChannel(config.NET_IF_WIDTH_BITS))
-      val rlimit = Input(new RateLimiterSettings)
+      val rlimit = Input(new RateLimiterSettings(netConfig))
     })
 
     reader.module.io.send <> io.send
@@ -176,10 +187,10 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
     queue.io.alloc <> reader.module.io.alloc
     queue.io.in <> reader.module.io.out
 
-    val aligner = Module(new Aligner(new IceNetConfig(NET_IF_WIDTH_BITS = config.NET_IF_WIDTH_BITS)))
+    val aligner = Module(new Aligner(netConfig))
     aligner.io.in <> queue.io.out
 
-    val limiter = Module(new RateLimiter(new StreamChannel(config.NET_IF_WIDTH_BITS)))
+    val limiter = Module(new RateLimiter(new StreamChannel(config.NET_IF_WIDTH_BITS), netConfig))
     limiter.io.in <> aligner.io.out
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
@@ -508,11 +519,11 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
  *
  * @param ifWidthBits flit size in bits
  */
-class NICIO(ifWidthBits: Int) extends StreamIO(ifWidthBits) {
+class NICIO(netConfig: IceNetConfig) extends StreamIO(netConfig.NET_IF_WIDTH_BITS) {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
-  val rlimit = Input(new RateLimiterSettings)
+  val rlimit = Input(new RateLimiterSettings(netConfig))
 
-  override def cloneType = (new NICIO(ifWidthBits)).asInstanceOf[this.type]
+  override def cloneType = (new NICIO(netConfig)).asInstanceOf[this.type]
 }
 
 /* 
@@ -548,9 +559,13 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
   lazy val module = new LazyModuleImp(this) {
     val config = p(NICKey)
+    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
+                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
 
     val io = IO(new Bundle {
-      val ext = new NICIO(config.NET_IF_WIDTH_BITS)
+      val ext = new NICIO(netConfig)
       val tap = config.tapFunc.map(_ => Decoupled(new StreamChannel(config.NET_IF_WIDTH_BITS)))
     })
 
@@ -574,10 +589,14 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
  * Class SimNetwork
  */
 class SimNetwork(implicit p: Parameters) extends BlackBox {
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
+                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
   val io = IO(new Bundle {
     val clock = Input(Clock())
     val reset = Input(Bool())
-    val net = Flipped(new NICIO(p(NICKey).NET_IF_WIDTH_BITS))
+    val net = Flipped(new NICIO(netConfig))
   })
 }
 
@@ -600,7 +619,11 @@ trait HasPeripheryIceNIC  { this: BaseSubsystem =>
 trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   val outer: HasPeripheryIceNIC
   implicit val p: Parameters
-  val net = IO(new NICIO(p(NICKey).NET_IF_WIDTH_BITS))
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
+                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+  val net = IO(new NICIO(netConfig))
 
   net <> outer.icenic.module.io.ext
 
@@ -623,21 +646,21 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
 /**
  * NICIOvonly class
  */
-class NICIOvonly(ifWidthBits: Int) extends Bundle {
-  val in = Flipped(Valid(new StreamChannel(ifWidthBits)))
-  val out = Valid(new StreamChannel(ifWidthBits))
+class NICIOvonly(netConfig: IceNetConfig) extends Bundle {
+  val in = Flipped(Valid(new StreamChannel(netConfig.NET_IF_WIDTH_BITS)))
+  val out = Valid(new StreamChannel(netConfig.NET_IF_WIDTH_BITS))
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
-  val rlimit = Input(new RateLimiterSettings)
+  val rlimit = Input(new RateLimiterSettings(netConfig))
 
-  override def cloneType = (new NICIOvonly(ifWidthBits)).asInstanceOf[this.type]
+  override def cloneType = (new NICIOvonly(netConfig)).asInstanceOf[this.type]
 }
 
 /**
  * Companion object to NICIOvonly
  */
 object NICIOvonly {
-  def apply(nicio: NICIO, ifWidthBits: Int): NICIOvonly = {
-    val vonly = Wire(new NICIOvonly(ifWidthBits))
+  def apply(nicio: NICIO, netConfig: IceNetConfig): NICIOvonly = {
+    val vonly = Wire(new NICIOvonly(netConfig))
     vonly.out.valid := nicio.out.valid
     vonly.out.bits  := nicio.out.bits
     nicio.out.ready := true.B
@@ -656,9 +679,13 @@ object NICIOvonly {
 trait HasPeripheryIceNICModuleImpValidOnly extends LazyModuleImp {
   implicit val p: Parameters
   val outer: HasPeripheryIceNIC
-  val net = IO(new NICIOvonly(p(NICKey).NET_IF_WIDTH_BITS))
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
+                                  RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                  RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                  RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+  val net = IO(new NICIOvonly(netConfig))
 
-  net <> NICIOvonly(outer.icenic.module.io.ext, p(NICKey).NET_IF_WIDTH_BITS)
+  net <> NICIOvonly(outer.icenic.module.io.ext, netConfig) 
 }
 
 class IceNicTestSendDriver(
@@ -690,7 +717,6 @@ class IceNicTestSendDriver(
 
     val sendReqAddrVec = VecInit(sendReqs.map{case (addr, _, _) => addr.U(addrBits.W)})
     val sendReqCounts = sendReqs.map { case (_, len, _) => len / beatBytes }
-    // AJG: Debugging statements
     println( "sendReqCounts: " + sendReqCounts )
     val sendReqCountVec = VecInit(sendReqCounts.map(_.U))
     val sendReqBase = VecInit((0 +: (1 until sendReqs.size).map(
@@ -863,12 +889,17 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
-    val gen = Module(new PacketGen(recvLens, testData, new IceNetConfig( NET_IF_WIDTH_BITS = config.NET_IF_WIDTH_BITS )))
+    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
+                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+
+    val gen = Module(new PacketGen(recvLens, testData, netConfig))
     gen.io.start := io.start
     recvDriver.module.io.start := io.start
     recvPath.module.io.recv <> recvDriver.module.io.recv
     recvPath.module.io.in <> RateLimiter(
-      gen.io.out, RLIMIT_INC, RLIMIT_PERIOD, RLIMIT_SIZE)
+      gen.io.out, RLIMIT_INC, RLIMIT_PERIOD, RLIMIT_SIZE, netConfig)
     io.finished := recvDriver.module.io.finished
   }
 }

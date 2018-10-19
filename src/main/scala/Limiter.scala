@@ -9,10 +9,10 @@ import IceNetConsts._
 /**
  * This specifies the particular settings to limit the bandwidth of the NIC.
  */
-class RateLimiterSettings extends Bundle {
-  val incBits = log2Ceil(RLIMIT_MAX_INC)
-  val periodBits = log2Ceil(RLIMIT_MAX_PERIOD)
-  val sizeBits = log2Ceil(RLIMIT_MAX_SIZE)
+class RateLimiterSettings(netConfig: IceNetConfig) extends Bundle {
+  val incBits = log2Ceil(netConfig.RLIMIT_MAX_INC)
+  val periodBits = log2Ceil(netConfig.RLIMIT_MAX_PERIOD)
+  val sizeBits = log2Ceil(netConfig.RLIMIT_MAX_SIZE)
 
   /*
    * Given a clock frequency of X, you can achieve an output bandwidth
@@ -23,6 +23,8 @@ class RateLimiterSettings extends Bundle {
   val inc = UInt(incBits.W)
   val period = UInt(periodBits.W)
   val size = UInt(sizeBits.W)
+
+  override def cloneType = (new RateLimiterSettings(netConfig)).asInstanceOf[this.type]
 }
 
 /**
@@ -32,15 +34,15 @@ class RateLimiterSettings extends Bundle {
  *
  * @param typ type of data to be limited
  */
-class RateLimiter[T <: Data](typ: T) extends Module {
-  val incBits = log2Ceil(RLIMIT_MAX_INC)
-  val periodBits = log2Ceil(RLIMIT_MAX_PERIOD)
-  val sizeBits = log2Ceil(RLIMIT_MAX_SIZE)
+class RateLimiter[T <: Data](typ: T, netConfig: IceNetConfig) extends Module {
+  val incBits = log2Ceil(netConfig.RLIMIT_MAX_INC)
+  val periodBits = log2Ceil(netConfig.RLIMIT_MAX_PERIOD)
+  val sizeBits = log2Ceil(netConfig.RLIMIT_MAX_SIZE)
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(typ))
     val out = Decoupled(typ)
-    val settings = Input(new RateLimiterSettings)
+    val settings = Input(new RateLimiterSettings(netConfig))
   })
 
   val tokens = RegInit(0.U(sizeBits.W))
@@ -79,9 +81,9 @@ class RateLimiter[T <: Data](typ: T) extends Module {
  * Companion object to RateLimiter class
  */
 object RateLimiter {
-  def apply[T <: Data](in: DecoupledIO[T], inc: Int, period: Int, size: Int) = {
+  def apply[T <: Data](in: DecoupledIO[T], inc: Int, period: Int, size: Int, netConfig: IceNetConfig) = {
     if (period > 1) {
-      val limiter = Module(new RateLimiter(in.bits.cloneType))
+      val limiter = Module(new RateLimiter(in.bits.cloneType, netConfig))
       limiter.io.in <> in
       limiter.io.settings.inc := inc.U
       limiter.io.settings.period := (period - 1).U
@@ -94,14 +96,17 @@ object RateLimiter {
 
 /**
  * Unit test for RateLimiter class
+ *
+ * @param testWidth size of flit
  */
-class RateLimiterTest extends UnitTest {
+class RateLimiterTest(testWidth: Int = 64) extends UnitTest {
   val nFlits = 48
   val started = RegInit(false.B)
   val sending = RegInit(false.B)
   val receiving = RegInit(false.B)
 
-  val limiter = Module(new RateLimiter(Bool()))
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)
+  val limiter = Module(new RateLimiter(Bool(), netConfig))
   limiter.io.in.valid := sending
   limiter.io.in.bits := true.B
   limiter.io.out.ready := receiving

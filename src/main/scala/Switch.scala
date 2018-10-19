@@ -11,10 +11,10 @@ import testchipip._
 import IceNetConsts._
 
 /**
- * Description of DistributionBuffer
+ * Reroutes a input type to n locations depending on the route input
  *
  * @param typ type of item that the buffer stores
- * @param n size of the buffer
+ * @param n number of places to route the input signal
  */
 class DistributionBuffer[T <: Data](typ: T, n: Int) extends Module {
   val io = IO(new Bundle {
@@ -26,6 +26,7 @@ class DistributionBuffer[T <: Data](typ: T, n: Int) extends Module {
   val tosend = RegInit(0.U(n.W))
   val senddata = Reg(typ)
 
+  // map all the send signals to the output and connect the single input type to the senddata output
   io.out.zip(tosend.toBools).map { case (out, send) =>
     out.valid := send
     out.bits := senddata
@@ -62,8 +63,7 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidthBits: Int) extends Module {
   val dstmac = Reg(UInt(ETH_MAC_BITS.W))
   val route = Reg(UInt(n.W))
 
-  val buffer = Module(new DistributionBuffer(
-    new StreamChannel(ifWidthBits), n))
+  val buffer = Module(new DistributionBuffer(new StreamChannel(ifWidthBits), n))
 
   io.tcam.data := dstmac
   io.out <> buffer.io.out
@@ -75,15 +75,26 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidthBits: Int) extends Module {
   buffer.io.route := route
 
   when (state === s_idle && io.header.valid) {
+    //AJG: TODO: Remove
+    //printf("dstmac := 0x%x\n", io.header.bits.dstmac)
     dstmac := io.header.bits.dstmac
     state := s_tcam
   }
   when (state === s_tcam) {
     when (dstmac.andR) {
+      //AJG: TODO: Remove
+      //printf("Forward the packet with route: 0x%x\n", ~0.U(n.W) ^ (1 << id).U)
       route := ~0.U(n.W) ^ (1 << id).U
       state := s_forward
     }
     .otherwise {
+      //AJG: TODO: Remove
+      //when(io.tcam.found){
+      //  printf("Forward the packet with route: 0x%x orig addr 0x%x\n", UIntToOH(io.tcam.addr), io.tcam.addr)
+      //}
+      //.otherwise{
+      //  printf("Drop the packet\n")
+      //}
       route := UIntToOH(io.tcam.addr)
       state := Mux(io.tcam.found, s_forward, s_drop)
     }
@@ -136,7 +147,10 @@ class SimpleSwitch(address: BigInt, n: Int, netConfig: IceNetConfig)
     (implicit p: Parameters) extends LazyModule {
 
   val node = TLIdentityNode()
-  val tcam = LazyModule(new TCAM(address, n, netConfig.NET_IF_WIDTH_BITS, n))
+
+  // AJG: TODO: Ask Howie if it is fine to make this 8B large. MAC addr's will probably not go larger than
+  // 8B. At minimum this needs to be ETH_MAC_SIZE
+  val tcam = LazyModule(new TCAM(address, n, 64, n))
 
   tcam.node := node
 
@@ -193,14 +207,18 @@ class SwitchTestSetup(macaddrs: Seq[Long])
     tl.a.valid := state === s_acq
     tl.a.bits := edge.Put(
       fromSource = 0.U,
-      lgSize = 3.U,
+      lgSize = 3.U, //AJG: TODO: This should correspond with the decision of the size of the TCAM. If they don't line up then the mask breaks things
       toAddress = Cat(0.U(1.W), writeCnt << 3.U),
       data = tcamData(writeCnt))._2
     tl.d.ready := state === s_gnt
     io.finished := state === s_done
 
     when (state === s_idle && io.start) { state := s_acq }
-    when (tl.a.fire()) { state := s_gnt }
+    when (tl.a.fire()) { 
+      state := s_gnt
+      //AJG: TODO: Remove
+      //printf("TCAM Data(%d) := (0x%x)\n", writeCnt, tcamData(writeCnt))
+    }
     when (tl.d.fire()) { state := s_acq }
     when (writeDone) { state := s_done }
   }
@@ -216,7 +234,7 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
   })
 
   val sendHeader = EthernetHeader(dstmac.U, srcmac.U, 0.U)
-  val sendPacket = VecInit(sendHeader.toWords(netConfig.NET_IF_WIDTH_BITS) ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
+  val sendPacket = VecInit(sendHeader.toWords(netConfig.NET_IF_WIDTH_BITS) ++ Seq(1, 2, 3, 4).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
   val recvPacket = Reg(Vec(sendPacket.size, UInt(netConfig.NET_IF_WIDTH_BITS.W)))
   val recvHeader = (new EthernetHeader).fromWords(recvPacket, netConfig.NET_IF_WIDTH_BITS)
   val headerDone = RegInit(false.B)
@@ -233,6 +251,16 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
     state := s_send
   }
 
+  //AJG: TODO: Remove
+  //printf("---Client---\n")
+  //when(io.net.in.fire()){
+  //  printf("Recieved: recvPacket(%d) := 0x%x\n", inCnt, io.net.in.bits.data)
+  //}
+  //when(io.net.out.fire()){
+  //  printf("Sending: sendPacket(%d) := 0x%x\n", outCnt, io.net.out.bits.data) 
+  //}
+
+
   when (outDone) { state := s_recv }
   when (io.net.in.fire()) {
     recvPacket(inCnt) := io.net.in.bits.data
@@ -248,6 +276,16 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
   assert(!headerDone || !io.net.in.valid ||
     io.net.in.bits.data === sendPacket(inCnt),
     "BasicSwitchTest: Returned payload incorrect")
+
+  //AJG: TODO: Remove
+  //when(!(!headerDone ||
+  //  (recvHeader.srcmac === sendHeader.dstmac &&
+  //   recvHeader.dstmac === sendHeader.srcmac))){
+  //     printf("Incorrect header\n")
+  //     printf("Wrong: recvHeader: total(0x%x) srcmac(0x%x) destmac(0x%x)\n", Cat(recvPacket.take(headerWords).reverse), recvHeader.srcmac, recvHeader.dstmac)
+  //     printf("Wrong: sendHeader: total(0x%x) srcmac(0x%x) destmac(0x%x)\n", sendHeader.asTypeOf(UInt()), sendHeader.srcmac, sendHeader.dstmac)
+  //   }
+  //printf("---Client Done---\n")
 
   io.finished := state === s_done
   io.net.out.valid := state === s_send
@@ -278,6 +316,15 @@ class BasicSwitchTestServer(netConfig: IceNetConfig) extends Module {
   io.net.out.bits.keep := netConfig.NET_FULL_KEEP 
   io.net.out.bits.data := sendPacket(sendCnt)
   io.net.out.bits.last := sendCnt === (sendPacket.size-1).U
+
+  printf("---Server---\n")
+  when(io.net.in.fire()){
+    printf("Recieved: recvPacket(%d) := 0x%x\n", recvCnt, io.net.in.bits.data)
+  }
+  when(io.net.out.fire()){
+    printf("Sending: sendPacket(%d) := 0x%x\n", sendCnt, io.net.out.bits.data) 
+  }
+  printf("---Server Done---\n")
 
   when (io.net.in.fire()) { recvPacket(recvCnt) := io.net.in.bits.data }
   when (recvDone) { sending := true.B }
@@ -325,7 +372,7 @@ class BroadcastTestSender(mac: Long, netConfig: IceNetConfig) extends Module {
   val state = RegInit(s_idle)
 
   val sendHeader = EthernetHeader(ETH_BCAST_MAC, mac.U, 0.U)
-  val sendPacket = VecInit(sendHeader.toWords(netConfig.NET_IF_WIDTH_BITS) ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
+  val sendPacket = VecInit(sendHeader.toWords(netConfig.NET_IF_WIDTH_BITS) ++ Seq(1, 2, 3, 4).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
   val (sendCnt, sendDone) = Counter(io.net.out.fire(), sendPacket.size)
 
   io.net.out.valid := state === s_send
@@ -358,7 +405,7 @@ class BroadcastTestReceiver(srcmac: Long, ifWidthBits: Int) extends Module {
   io.finished := state === s_done
 
   val expectedHeader = EthernetHeader(ETH_BCAST_MAC, srcmac.U, 0.U)
-  val expectedPacket = VecInit(expectedHeader.toWords(ifWidthBits) ++ Seq(1, 2, 3, 4).map(_.U(64.W)))
+  val expectedPacket = VecInit(expectedHeader.toWords(ifWidthBits) ++ Seq(1, 2, 3, 4).map(_.U(ifWidthBits.W)))
   val (recvCnt, recvDone) = Counter(
     io.net.in.fire(), expectedPacket.size)
 
