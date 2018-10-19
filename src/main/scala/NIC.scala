@@ -809,8 +809,7 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
     val reqIdx = Reg(UInt(log2Ceil(recvReqs.size).W))
     val memIdx = Reg(UInt(log2Ceil(recvData.size).W))
 
-    val outRecv = TwoWayCounter(
-      io.recv.req.fire(), io.recv.comp.fire(), recvReqVec.size)
+    val outRecv = TwoWayCounter(io.recv.req.fire(), io.recv.comp.fire(), recvReqVec.size)
 
     tl.a.valid := state === s_check_req
     tl.a.bits := edge.Get(
@@ -866,7 +865,7 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
   // the 90-flit packet should be dropped
   val recvLens = Seq(180, 2, 90, 8)
   val testData = Seq.tabulate(280) { i => BigInt(i << 4) }
-  val recvData = testData.take(182) ++ testData.drop(272)
+  val recvData = testData.take(182) ++ testData.drop(272) // Create test data for 190b of data
 
   val config = p(NICKey)
   val btBytes = 8 // default number of btBytes
@@ -890,16 +889,15 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
     val io = IO(new Bundle with UnitTestIO)
 
     val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+                                     RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
+                                     RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
+                                     RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
 
     val gen = Module(new PacketGen(recvLens, testData, netConfig))
     gen.io.start := io.start
     recvDriver.module.io.start := io.start
     recvPath.module.io.recv <> recvDriver.module.io.recv
-    recvPath.module.io.in <> RateLimiter(
-      gen.io.out, RLIMIT_INC, RLIMIT_PERIOD, RLIMIT_SIZE, netConfig)
+    recvPath.module.io.in <> RateLimiter(gen.io.out, RLIMIT_INC, RLIMIT_PERIOD, RLIMIT_SIZE, netConfig)
     io.finished := recvDriver.module.io.finished
   }
 }

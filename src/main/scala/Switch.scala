@@ -317,14 +317,14 @@ class BasicSwitchTestServer(netConfig: IceNetConfig) extends Module {
   io.net.out.bits.data := sendPacket(sendCnt)
   io.net.out.bits.last := sendCnt === (sendPacket.size-1).U
 
-  printf("---Server---\n")
-  when(io.net.in.fire()){
-    printf("Recieved: recvPacket(%d) := 0x%x\n", recvCnt, io.net.in.bits.data)
-  }
-  when(io.net.out.fire()){
-    printf("Sending: sendPacket(%d) := 0x%x\n", sendCnt, io.net.out.bits.data) 
-  }
-  printf("---Server Done---\n")
+  //printf("---Server---\n")
+  //when(io.net.in.fire()){
+  //  printf("Recieved: recvPacket(%d) := 0x%x\n", recvCnt, io.net.in.bits.data)
+  //}
+  //when(io.net.out.fire()){
+  //  printf("Sending: sendPacket(%d) := 0x%x\n", sendCnt, io.net.out.bits.data) 
+  //}
+  //printf("---Server Done---\n")
 
   when (io.net.in.fire()) { recvPacket(recvCnt) := io.net.in.bits.data }
   when (recvDone) { sending := true.B }

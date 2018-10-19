@@ -142,10 +142,9 @@ class Aligner(netConfig: IceNetConfig) extends Module {
 
 /**
  * Unit test for Aligner class
- *
- * @param testWidth size of the network interface for test
  */
-class AlignerTest(testWidth: Int = 64) extends UnitTest {
+class AlignerTest extends UnitTest {
+  val testWidth = 64
   // send two packets worth of information
   val inData = VecInit(
     "h0011223344556677".U,
@@ -212,10 +211,9 @@ class AlignerTest(testWidth: Int = 64) extends UnitTest {
 
 /**
  * Unit test for StreamShifter class
- *
- * @param testWidth size of the network interface for test
  */
-class StreamShifterTest(testWidth: Int = 64) extends UnitTest {
+class StreamShifterTest extends UnitTest {
+  val testWidth = 64
   // send multiple packets worth of information
   val inData = VecInit( "h0011223344556677".U, "h8899AABBCCDDEEFF".U, "h0123456789ABCDEF".U,
                         "h7766554433221100".U,

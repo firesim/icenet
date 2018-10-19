@@ -7,11 +7,11 @@ import testchipip.StreamChannel
 import IceNetConsts._
 
 /**
- * Helper class to ...
+ * Helper class to create packets from input data
  *
  * @param lengths ...
  * @param genData ...
- * @param netConsts ...
+ * @param netConsts input parameters for the network 
  */
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig) extends Module {
   val io = IO(new Bundle {
