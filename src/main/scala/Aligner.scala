@@ -45,12 +45,25 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
   val inValidDelayOne = RegNext(io.stream.in.valid)
   val processingLast = RegInit(false.B) // indicates when a last flag is seen and the packet is finishing
 
-  io.stream.in.ready := Mux(doneWithOutput, io.stream.out.ready, Mux(processingLast, false.B, io.stream.out.ready))
+  when (io.addrOffsetBytes =/= 0.U){
+    io.stream.in.ready := Mux(doneWithOutput, io.stream.out.ready, Mux(processingLast, false.B, io.stream.out.ready))
 
-  io.stream.out.valid := inValidDelayOne || processingLast || (leftToSendBytes > 0.U)
-  io.stream.out.bits.data := send_data
-  io.stream.out.bits.keep := send_keep
-  io.stream.out.bits.last := doneWithOutput // send last signal when there are no more bytes to send
+    io.stream.out.valid := inValidDelayOne || processingLast || (leftToSendBytes > 0.U)
+    io.stream.out.bits.data := send_data
+    io.stream.out.bits.keep := send_keep
+    io.stream.out.bits.last := doneWithOutput // send last signal when there are no more bytes to send
+  }
+  .otherwise{
+    io.stream.in.ready := io.stream.out.ready
+
+    io.stream.out.valid := io.stream.in.valid
+    io.stream.out.bits.data := io.stream.in.bits.data
+    io.stream.out.bits.keep := io.stream.in.bits.keep
+    io.stream.out.bits.last := io.stream.in.bits.last 
+  }
+
+  // I think this is
+  //io.stream.out.bits.last := Mux(addrOffset > 0.U, doneWithOutput, RegNext(io.stream.in.valid && io.stream.out.bits.last)) // send last signal when there are no more bytes to send
 
   when (io.stream.in.fire() && io.stream.out.fire()) {
     // when something enters and something else leaves
@@ -286,5 +299,68 @@ class StreamShifterTest extends UnitTest {
          (compareData( streamShifter.io.stream.out.bits.data, outData(outIdx), streamShifter.io.stream.out.bits.keep) &&
          streamShifter.io.stream.out.bits.keep === outKeep(outIdx) &&
          streamShifter.io.stream.out.bits.last === outLast(outIdx)),
+         "StreamShifterTest: output does not match expected")
+}
+
+/**
+ * Unit test for StreamShifter class
+ */
+class StreamShifterZeroShiftTest extends UnitTest {
+  val testWidth = 64
+  // send multiple packets worth of information
+  val inData = VecInit( "h0011223344556677".U, "h8899AABBCCDDEEFF".U, "h0123456789ABCDEF".U,
+                        "h7766554433221100".U,
+                        "hFEDCBA9876543210".U,
+                        "hDEADBEEF00112233".U,
+                        "h1234567890123456".U )
+  val inKeep = VecInit( "b11111111".U, "b11111111".U, "b00001111".U,
+                        "b00000011".U,
+                        "b00001111".U,
+                        "b00111111".U,
+                        "b11111111".U )
+  val inLast = VecInit( false.B, false.B, true.B,
+                        true.B,
+                        true.B,
+                        true.B,
+                        true.B )
+
+  val shiftByteAmount = 0.U
+
+  val started = RegInit(false.B)
+  val sending = RegInit(false.B)
+  val receiving = RegInit(false.B)
+
+  val streamShifter = Module(new StreamShifter(new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)))
+
+  val (inIdx, inDone) = Counter(streamShifter.io.stream.in.fire(), inData.size)
+  val (outIdx, outDone) = Counter(streamShifter.io.stream.out.fire(), inData.size)
+
+  streamShifter.io.stream.in.valid := sending
+  streamShifter.io.stream.in.bits.data := inData(inIdx)
+  streamShifter.io.stream.in.bits.keep := inKeep(inIdx)
+  streamShifter.io.stream.in.bits.last := inLast(inIdx)
+  streamShifter.io.stream.out.ready := receiving
+  streamShifter.io.addrOffsetBytes := shiftByteAmount // pass in shift amount
+
+  when (io.start && !started) {
+    started := true.B
+    sending := true.B
+    receiving := true.B
+  }
+  // when (started && !outDone) { receiving := !receiving } // Test when the output is not ready immediately
+  when (inDone) { sending := false.B }
+  when (outDone) { receiving := false.B }
+
+  io.finished := started && !sending && !receiving
+
+  def compareData(a: UInt, b: UInt, keep: UInt) = {
+    val bitmask = FillInterleaved(8, keep)
+    (a & bitmask) === (b & bitmask)
+  }
+
+  assert(!streamShifter.io.stream.out.fire() ||
+         (compareData( streamShifter.io.stream.out.bits.data, inData(outIdx), streamShifter.io.stream.out.bits.keep) &&
+         streamShifter.io.stream.out.bits.keep === inKeep(outIdx) &&
+         streamShifter.io.stream.out.bits.last === inLast(outIdx)),
          "StreamShifterTest: output does not match expected")
 }

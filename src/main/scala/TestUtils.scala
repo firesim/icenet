@@ -7,22 +7,24 @@ import testchipip.StreamChannel
 import IceNetConsts._
 
 /**
- * Helper class to create packets from input data
+ * Helper class to create packets from input data/keep and packet lengths
  *
- * @param lengths ...
- * @param genData ...
- * @param netConsts input parameters for the network 
+ * @param lengths lengths of each packet to generate from the data 
+ * @param genData data to put into packets 
+ * @param genKeep keep associated with the data
+ * @param netConfig configuration settings 
  */
-class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig) extends Module {
+class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], genKeep: Seq[BigInt], netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
-    val out = Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH_BITS))
+    val out = Decoupled(new StreamChannel(netConfig.NET_IF_WIDTH_BITS))
   })
 
   val maxLength = lengths.reduce(max(_, _))
   val totalLength = lengths.reduce(_ + _)
   val lengthVec = VecInit(lengths.map(_.U))
-  val dataVec = VecInit(genData.map(_.U(netConsts.NET_IF_WIDTH_BITS.W)))
+  val dataVec = VecInit(genData.map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
+  val keepVec = VecInit(genKeep.map(_.U(netConfig.NET_IF_WIDTH_BYTES.W)))
 
   require(totalLength == genData.size)
 
@@ -52,7 +54,7 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig
 
   io.out.valid := sending
   io.out.bits.data := dataVec(dataIdx)
-  io.out.bits.keep := netConsts.NET_FULL_KEEP
+  io.out.bits.keep := keepVec(dataIdx)
   io.out.bits.last := pktOffset === lengthVec(pktIdx) - 1.U
 }
 
@@ -60,23 +62,23 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], netConsts: IceNetConfig
  * Helper class to check the data input
  *
  * @param checkData the required data to check
- * @param checkKeep the keep bytemask 
+ * @param checkKeep the keep bytemask associated with the data 
  * @param checkLast the last indicator for the bytes sent 
- * @param netConsts the configuration settings 
+ * @param netConfig the configuration settings 
  */
 class PacketCheck(
     checkData: Seq[BigInt],
-    checkKeep: Seq[Int],
+    checkKeep: Seq[BigInt],
     checkLast: Seq[Boolean],
-    netConsts: IceNetConfig) extends Module {
+    netConfig: IceNetConfig) extends Module {
 
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new StreamChannel(netConsts.NET_IF_WIDTH_BITS)))
+    val in = Flipped(Decoupled(new StreamChannel(netConfig.NET_IF_WIDTH_BITS)))
     val finished = Output(Bool())
   })
 
-  val checkDataVec = VecInit(checkData.map(_.U(netConsts.NET_IF_WIDTH_BITS.W)))
-  val checkKeepVec = VecInit(checkKeep.map(_.U(netConsts.NET_IF_WIDTH_BYTES.W)))
+  val checkDataVec = VecInit(checkData.map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
+  val checkKeepVec = VecInit(checkKeep.map(_.U(netConfig.NET_IF_WIDTH_BYTES.W)))
   val checkLastVec = VecInit(checkLast.map(_.B))
 
   val (checkIdx, checkDone) = Counter(io.in.fire(), checkDataVec.length)

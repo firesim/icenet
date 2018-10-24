@@ -717,7 +717,6 @@ class IceNicTestSendDriver(
 
     val sendReqAddrVec = VecInit(sendReqs.map{case (addr, _, _) => addr.U(addrBits.W)})
     val sendReqCounts = sendReqs.map { case (_, len, _) => len / beatBytes }
-    println( "sendReqCounts: " + sendReqCounts )
     val sendReqCountVec = VecInit(sendReqCounts.map(_.U))
     val sendReqBase = VecInit((0 +: (1 until sendReqs.size).map(
       i => sendReqCounts.slice(0, i).reduce(_ + _))).map(_.U(addrBits.W)))
@@ -865,6 +864,7 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
   // the 90-flit packet should be dropped
   val recvLens = Seq(180, 2, 90, 8)
   val testData = Seq.tabulate(280) { i => BigInt(i << 4) }
+  val testKeep = Seq.fill(testData.size) { BigInt(0xFF) }
   val recvData = testData.take(182) ++ testData.drop(272) // Create test data for 190b of data
 
   val config = p(NICKey)
@@ -893,7 +893,7 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
                                      RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
                                      RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
 
-    val gen = Module(new PacketGen(recvLens, testData, netConfig))
+    val gen = Module(new PacketGen(recvLens, testData, testKeep, netConfig))
     gen.io.start := io.start
     recvDriver.module.io.start := io.start
     recvPath.module.io.recv <> recvDriver.module.io.recv
@@ -938,7 +938,7 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
     BigInt("FEDCBA9876543210", 16),
     BigInt("00000000FDECBA98", 16))
   // bytemask indicating what recv bytes are valid
-  val recvKeep = Seq(0xFF, 0xFF, 0xFF, 0x0F)
+  val recvKeep = Seq(BigInt(0xFF), BigInt(0xFF), BigInt(0xFF), BigInt(0x0F))
   // what is the last message send seq
   val recvLast = Seq(false, true, false, true)
 

@@ -75,26 +75,15 @@ class SimpleSwitchRouter(id: Int, n: Int, ifWidthBits: Int) extends Module {
   buffer.io.route := route
 
   when (state === s_idle && io.header.valid) {
-    //AJG: TODO: Remove
-    //printf("dstmac := 0x%x\n", io.header.bits.dstmac)
     dstmac := io.header.bits.dstmac
     state := s_tcam
   }
   when (state === s_tcam) {
     when (dstmac.andR) {
-      //AJG: TODO: Remove
-      //printf("Forward the packet with route: 0x%x\n", ~0.U(n.W) ^ (1 << id).U)
       route := ~0.U(n.W) ^ (1 << id).U
       state := s_forward
     }
     .otherwise {
-      //AJG: TODO: Remove
-      //when(io.tcam.found){
-      //  printf("Forward the packet with route: 0x%x orig addr 0x%x\n", UIntToOH(io.tcam.addr), io.tcam.addr)
-      //}
-      //.otherwise{
-      //  printf("Drop the packet\n")
-      //}
       route := UIntToOH(io.tcam.addr)
       state := Mux(io.tcam.found, s_forward, s_drop)
     }
@@ -216,8 +205,6 @@ class SwitchTestSetup(macaddrs: Seq[Long])
     when (state === s_idle && io.start) { state := s_acq }
     when (tl.a.fire()) { 
       state := s_gnt
-      //AJG: TODO: Remove
-      //printf("TCAM Data(%d) := (0x%x)\n", writeCnt, tcamData(writeCnt))
     }
     when (tl.d.fire()) { state := s_acq }
     when (writeDone) { state := s_done }
@@ -251,16 +238,6 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
     state := s_send
   }
 
-  //AJG: TODO: Remove
-  //printf("---Client---\n")
-  //when(io.net.in.fire()){
-  //  printf("Recieved: recvPacket(%d) := 0x%x\n", inCnt, io.net.in.bits.data)
-  //}
-  //when(io.net.out.fire()){
-  //  printf("Sending: sendPacket(%d) := 0x%x\n", outCnt, io.net.out.bits.data) 
-  //}
-
-
   when (outDone) { state := s_recv }
   when (io.net.in.fire()) {
     recvPacket(inCnt) := io.net.in.bits.data
@@ -276,16 +253,6 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
   assert(!headerDone || !io.net.in.valid ||
     io.net.in.bits.data === sendPacket(inCnt),
     "BasicSwitchTest: Returned payload incorrect")
-
-  //AJG: TODO: Remove
-  //when(!(!headerDone ||
-  //  (recvHeader.srcmac === sendHeader.dstmac &&
-  //   recvHeader.dstmac === sendHeader.srcmac))){
-  //     printf("Incorrect header\n")
-  //     printf("Wrong: recvHeader: total(0x%x) srcmac(0x%x) destmac(0x%x)\n", Cat(recvPacket.take(headerWords).reverse), recvHeader.srcmac, recvHeader.dstmac)
-  //     printf("Wrong: sendHeader: total(0x%x) srcmac(0x%x) destmac(0x%x)\n", sendHeader.asTypeOf(UInt()), sendHeader.srcmac, sendHeader.dstmac)
-  //   }
-  //printf("---Client Done---\n")
 
   io.finished := state === s_done
   io.net.out.valid := state === s_send

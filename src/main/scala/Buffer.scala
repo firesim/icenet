@@ -101,8 +101,15 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
-  // AJG: Make sure that there is no incorrectness given with the flit being larger than the header size
-  val outHeader = VecInit(headers.map(header => Cat(header.reverse).asTypeOf(headerType)))
+  // note: if wordBytes > headerBytes then the header will be taken from the most significant bits
+  val outHeader = VecInit(headers.map(header => if (wordBytes > headerBytes){
+      (header.asUInt() >> (wordBits - headerBytes*8)).asTypeOf(headerType)
+    }
+    else {
+      header.asUInt().asTypeOf(headerType)
+    }
+  ))
+
   val outLast = VecInit(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValidReg = RegInit(false.B)
 
