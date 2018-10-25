@@ -40,7 +40,7 @@ case class IceNetConfig(
   def NET_IF_WIDTH_BYTES: Int = NET_IF_WIDTH_BITS / 8 // this is the flit size in bytes
 
   // these should all be larger than the max network bandwidth in GBps
-  def RLIMIT_MAX_INC: Int = NET_IF_WIDTH_BITS * PROC_SPEED
-  def RLIMIT_MAX_PERIOD: Int = NET_IF_WIDTH_BITS * PROC_SPEED
-  def RLIMIT_MAX_SIZE: Int = NET_IF_WIDTH_BITS * PROC_SPEED 
+  def RLIMIT_MAX_INC: Int = (NET_IF_WIDTH_BITS.asInstanceOf[Double] * IceNetConsts.PROC_SPEED).asInstanceOf[Int]
+  def RLIMIT_MAX_PERIOD: Int = (NET_IF_WIDTH_BITS.asInstanceOf[Double] * IceNetConsts.PROC_SPEED).asInstanceOf[Int]
+  def RLIMIT_MAX_SIZE: Int = (NET_IF_WIDTH_BITS.asInstanceOf[Double] * IceNetConsts.PROC_SPEED).asInstanceOf[Int]
 }
