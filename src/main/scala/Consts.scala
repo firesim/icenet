@@ -7,6 +7,9 @@ import chisel3._
  * the limit periods, etc.
  */
 object IceNetConsts {
+  // Assumed freq in mHz
+  val PROC_SPEED = 3.2
+
   // Ethernet constants as given by the IEEE standard
   val ETH_MAX_BYTES = 1520
   val ETH_HEAD_BYTES = 16
@@ -32,10 +35,12 @@ object IceNetConsts {
 case class IceNetConfig(
   val NET_IF_WIDTH_BITS: Int = 64,
   val NET_LEN_BITS: Int = 16,
-  val RLIMIT_MAX_INC: Int = 64,
-  val RLIMIT_MAX_PERIOD: Int = 64,
-  val RLIMIT_MAX_SIZE: Int = 64
 ){
   def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W) // this is a bytemask to indicate which bytes should be kept
   def NET_IF_WIDTH_BYTES: Int = NET_IF_WIDTH_BITS / 8 // this is the flit size in bytes
+
+  // these should all be larger than the max network bandwidth in GBps
+  def RLIMIT_MAX_INC: Int = NET_IF_WIDTH_BITS * PROC_SPEED
+  def RLIMIT_MAX_PERIOD: Int = NET_IF_WIDTH_BITS * PROC_SPEED
+  def RLIMIT_MAX_SIZE: Int = NET_IF_WIDTH_BITS * PROC_SPEED 
 }

@@ -40,11 +40,6 @@ case class NICConfig(
     val NET_IF_WIDTH_BYTES = NET_IF_WIDTH_BITS / 8
     def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
     val outBufFlits = 2 * ETH_MAX_BYTES / NET_IF_WIDTH_BYTES
-
-    // default: set max size to flit size
-    val RLIMIT_MAX_INC = NET_IF_WIDTH_BITS
-    val RLIMIT_MAX_PERIOD = NET_IF_WIDTH_BITS
-    val RLIMIT_MAX_SIZE = NET_IF_WIDTH_BITS
 }
 
 /**
@@ -170,10 +165,7 @@ class IceNicSendPath(implicit p: Parameters) extends LazyModule {
   val config = p(NICKey)
 
   lazy val module = new LazyModuleImp(this) {
-    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
 
     val io = IO(new Bundle {
       val send = Flipped(new IceNicSendIO)
@@ -559,10 +551,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
 
   lazy val module = new LazyModuleImp(this) {
     val config = p(NICKey)
-    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
 
     val io = IO(new Bundle {
       val ext = new NICIO(netConfig)
@@ -589,10 +578,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8)
  * Class SimNetwork
  */
 class SimNetwork(implicit p: Parameters) extends BlackBox {
-  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
+
   val io = IO(new Bundle {
     val clock = Input(Clock())
     val reset = Input(Bool())
@@ -619,10 +606,8 @@ trait HasPeripheryIceNIC  { this: BaseSubsystem =>
 trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   val outer: HasPeripheryIceNIC
   implicit val p: Parameters
-  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                   RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                   RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                   RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
+
   val net = IO(new NICIO(netConfig))
 
   net <> outer.icenic.module.io.ext
@@ -679,10 +664,8 @@ object NICIOvonly {
 trait HasPeripheryIceNICModuleImpValidOnly extends LazyModuleImp {
   implicit val p: Parameters
   val outer: HasPeripheryIceNIC
-  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                  RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                  RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                  RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
+
   val net = IO(new NICIOvonly(netConfig))
 
   net <> NICIOvonly(outer.icenic.module.io.ext, netConfig) 
@@ -888,10 +871,7 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
-    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS,
-                                     RLIMIT_MAX_INC = p(NICKey).RLIMIT_MAX_INC,
-                                     RLIMIT_MAX_PERIOD = p(NICKey).RLIMIT_MAX_PERIOD,
-                                     RLIMIT_MAX_SIZE = p(NICKey).RLIMIT_MAX_SIZE)
+    val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
 
     val gen = Module(new PacketGen(recvLens, testData, testKeep, netConfig))
     gen.io.start := io.start
