@@ -84,7 +84,6 @@ object EthernetHeader {
     header.srcmac := srcmac
     header.ethType := ethType
     header.padding := DontCare
-
     header
   }
 }

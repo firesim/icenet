@@ -17,29 +17,31 @@ import IceNetConsts._
  * @param wordBytes size of flit in bytes
  */
 class NetworkTap[T <: Data](
-    selectFunc: T => Bool,
-    headerType: T = new EthernetHeader,
+    selectFuncs: Seq[T => Bool],
+    headerTyp: T = new EthernetHeader,
     headerBytes: Int = ETH_HEAD_BYTES,
     wordBytes: Int) extends Module {
 
   val wordBits = wordBytes * 8
   val headerWords = if(wordBytes > headerBytes) 1 else headerBytes/wordBytes
+  val n = selectFuncs.length
 
   val io = IO(new Bundle {
     val inflow = Flipped(Decoupled(new StreamChannel(wordBits)))
     val passthru = Decoupled(new StreamChannel(wordBits))
-    val tapout = Decoupled(new StreamChannel(wordBits))
+    val tapout = Vec(n, Decoupled(new StreamChannel(wordBits)))
   })
 
-  val headerDataVec = Reg(Vec(headerWords, UInt(wordBits.W)))
-  val headerKeepVec = Reg(Vec(headerWords, UInt(wordBytes.W)))
+  assert(n > 0, "NetworkTap must have at least one output tap")
+
+  val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
 
   // note: if wordBytes > headerBytes then the header will be taken from the most significant bits
   val header = if (wordBytes > headerBytes){
-    (headerDataVec.asUInt() >> (wordBits - headerBytes*8)).asTypeOf(headerType)
+    (headerDataVec.asUInt() >> (wordBits - headerBytes*8)).asTypeOf(headerTyp)
   }
   else {
-    headerDataVec.asUInt().asTypeOf(headerType)
+    headerDataVec.asUInt().asTypeOf(headerTyp)
   }
 
   val idxBits = if(headerWords < 2) 1 else log2Ceil(headerWords)
@@ -47,45 +49,45 @@ class NetworkTap[T <: Data](
   val headerLen = Reg(UInt(idxBits.W))
   val bodyLess = Reg(Bool())
 
-  val (s_inflow_header :: s_check_header ::
-       s_passthru_header :: s_passthru_body ::
-       s_tapout_header :: s_tapout_body :: Nil) = Enum(6)
-  val state = RegInit(s_inflow_header)
+  val (s_collect_header :: s_check_header ::
+       s_output_header :: s_forward_body :: Nil) = Enum(4)
+  val state = RegInit(s_collect_header)
+  val route = Reg(Vec(n, Bool()))
+
+  val selectedReady = MuxCase(io.passthru.ready,
+    route.zip(io.tapout.map(_.ready)))
 
   io.inflow.ready := MuxLookup(state, false.B, Seq(
-    s_inflow_header -> true.B,
-    s_passthru_body -> io.passthru.ready,
-    s_tapout_body -> io.tapout.ready))
+    s_collect_header -> true.B,
+    s_forward_body -> selectedReady))
 
-  // connect passthru signals to header signals
-  io.passthru.valid := MuxLookup(state, false.B, Seq(
-    s_passthru_header -> true.B,
-    s_passthru_body -> io.inflow.valid))
-  io.passthru.bits.data := MuxLookup(state, 0.U, Seq(
-    s_passthru_header -> headerDataVec(headerIdx),
-    s_passthru_body -> io.inflow.bits.data))
-  io.passthru.bits.last := MuxLookup(state, false.B, Seq(
-    s_passthru_header -> (bodyLess && headerIdx === headerLen),
-    s_passthru_body -> io.inflow.bits.last))
-  io.passthru.bits.keep := MuxLookup(state, 0.U, Seq(
-    s_passthru_header -> headerKeepVec(headerIdx),
-    s_passthru_body -> io.inflow.bits.keep))
+  val hasTapout = route.reduce(_ || _)
 
-  // connect tapout signals to header signals (identical to passthru)
-  io.tapout.valid := MuxLookup(state, false.B, Seq(
-    s_tapout_header -> true.B,
-    s_tapout_body -> io.inflow.valid))
-  io.tapout.bits.data := MuxLookup(state, 0.U, Seq(
-    s_tapout_header -> headerDataVec(headerIdx),
-    s_tapout_body -> io.inflow.bits.data))
-  io.tapout.bits.last := MuxLookup(state, false.B, Seq(
-    s_tapout_header -> (bodyLess && headerIdx === headerLen),
-    s_tapout_body -> io.inflow.bits.last))
-  io.tapout.bits.keep := MuxLookup(state, 0.U, Seq(
-    s_tapout_header -> headerKeepVec(headerIdx),
-    s_tapout_body -> io.inflow.bits.keep))
+  io.passthru.valid := MuxLookup(Cat(state, hasTapout), false.B, Seq(
+    Cat(s_output_header, false.B) -> true.B,
+    Cat(s_forward_body,  false.B) -> io.inflow.valid))
+  io.passthru.bits.data := MuxLookup(Cat(state, hasTapout), 0.U, Seq(
+    Cat(s_output_header, false.B) -> headerVec(headerIdx),
+    Cat(s_forward_body,  false.B) -> io.inflow.bits.data))
+  io.passthru.bits.last := MuxLookup(Cat(state, hasTapout), false.B, Seq(
+    Cat(s_output_header, false.B) -> (bodyLess && headerIdx === headerLen),
+    Cat(s_forward_body,  false.B) -> io.inflow.bits.last))
+  io.passthru.bits.keep := DontCare
 
-  when (state === s_inflow_header && io.inflow.valid) {
+  io.tapout.zip(route).foreach { case (tapout, sel) =>
+    tapout.valid := MuxLookup(Cat(state, sel), false.B, Seq(
+      Cat(s_output_header, true.B) -> true.B,
+      Cat(s_forward_body,  true.B) -> io.inflow.valid))
+    tapout.bits.data := MuxLookup(Cat(state, sel), 0.U, Seq(
+      Cat(s_output_header, true.B) -> headerVec(headerIdx),
+      Cat(s_forward_body,  true.B) -> io.inflow.bits.data))
+    tapout.bits.last := MuxLookup(Cat(state, sel), false.B, Seq(
+      Cat(s_output_header, true.B) -> (bodyLess && headerIdx === headerLen),
+      Cat(s_forward_body,  true.B) -> io.inflow.bits.last))
+    tapout.bits.keep := DontCare
+  }
+
+  when (state === s_collect_header && io.inflow.valid) {
     headerIdx := headerIdx + 1.U
     headerDataVec(headerIdx) := io.inflow.bits.data
     headerKeepVec(headerIdx) := io.inflow.bits.keep
@@ -96,29 +98,34 @@ class NetworkTap[T <: Data](
       headerLen := headerIdx
       headerIdx := 0.U
       bodyLess := io.inflow.bits.last
-      state := Mux(headerLast, s_check_header, s_passthru_header)
+
+      when (headerLast) {
+        state := s_check_header
+      } .otherwise {
+        route.foreach(_ := false.B)
+        state := s_output_header
+      }
     }
   }
 
   // when in check_header state, use passed in function to determine if it is a tapout or passthru
   when (state === s_check_header) {
-    state := Mux(selectFunc(header), s_tapout_header, s_passthru_header)
+    route := selectFuncs.map(_(header))
+    state := s_output_header
   }
 
-  val header_fire = state === s_passthru_header && io.passthru.ready ||
-                    state === s_tapout_header   && io.tapout.ready
-  val body_fire = state.isOneOf(s_passthru_body, s_tapout_body) && io.inflow.fire()
+  val headerFire = state === s_output_header && selectedReady
+  val bodyFire = state === s_forward_body && io.inflow.fire()
 
-  when (header_fire) {
+  when (headerFire) {
     headerIdx := headerIdx + 1.U
     when (headerIdx === headerLen) {
       headerIdx := 0.U
-      state := Mux(bodyLess, s_inflow_header,
-        Mux(state === s_passthru_header, s_passthru_body, s_tapout_body))
+      state := Mux(bodyLess, s_collect_header, s_forward_body)
     }
   }
 
-  when (body_fire && io.inflow.bits.last) { state := s_inflow_header }
+  when (bodyFire && io.inflow.bits.last) { state := s_collect_header }
 }
 
 /**
@@ -173,8 +180,10 @@ class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
   genIn.io.start := io.start // create the packets
   tap.io.inflow <> genIn.io.out // pass into DUT
 
-  // connect checkers for the passthru and tapout
-  checkTap.io.in <> tap.io.tapout
+  val tap = Module(new NetworkTap(
+    Seq((header: EthernetHeader) => header.ethType === 0x800.U)))
+  tap.io.inflow <> genIn.io.out
+  checkTap.io.in <> tap.io.tapout(0)
   checkPass.io.in <> tap.io.passthru
 
   io.finished := checkTap.io.finished || checkPass.io.finished
