@@ -41,13 +41,13 @@ class EthernetHeader extends Bundle {
    */
   def toWords(w: Int) = { 
     val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8) / w
-    //this.asUInt.asTypeOf(Vec(headerWords, UInt(w.W)))
-    if (headerWords == 1){
-      (this.asUInt() << (w - ETH_HEAD_BYTES*8)).asTypeOf(Vec(headerWords, UInt(w.W)))
-    }
-    else {
-      this.asUInt().asTypeOf(Vec(headerWords, UInt(w.W)))
-    }
+    this.asUInt.asTypeOf(Vec(headerWords, UInt(w.W)))
+    //if (headerWords == 1){
+    //  (this.asUInt() << (w - ETH_HEAD_BYTES*8)).asTypeOf(Vec(headerWords, UInt(w.W)))
+    //}
+    //else {
+    //  this.asUInt().asTypeOf(Vec(headerWords, UInt(w.W)))
+    //}
   }
 
   /**
@@ -58,15 +58,15 @@ class EthernetHeader extends Bundle {
    */
   def fromWords(words: Seq[UInt], w: Int) = {
     val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8) / w
-    //Cat(words.take(headerWords).reverse).asTypeOf(this)
+    Cat(words.take(headerWords).reverse).asTypeOf(this)
 
     // note: if w > ETH_HEAD_BYTES*8 then the header will be taken from the most significant bits
-    if (headerWords == 1){
-      (Cat(words.take(headerWords).reverse) >> (w - ETH_HEAD_BYTES*8)).asTypeOf(this)
-    }
-    else {
-      Cat(words.take(headerWords).reverse).asTypeOf(this)
-    }
+    //if (headerWords == 1){
+    //  (Cat(words.take(headerWords).reverse) >> (w - ETH_HEAD_BYTES*8)).asTypeOf(this)
+    //}
+    //else {
+    //  Cat(words.take(headerWords).reverse).asTypeOf(this)
+    //}
 
 
   }

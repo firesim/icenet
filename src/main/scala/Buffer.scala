@@ -92,7 +92,7 @@ class NetworkPacketBuffer[T <: Data](
   // Should this be andR or orR. If valid = true then there should be a byte to keep
   assert(!io.stream.in.valid || io.stream.in.bits.keep.orR, "NetworkPacketBuffer does not handle missing data")
 
-  val buffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
+  val buffer = Module(new BufferBRAM(bufWords, new DataKeepType(wordBits)))
   val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
   val bufLengths = RegInit(VecInit(Seq.fill(nPackets) { 0.U(idxBits.W) }))
   val bufValid = Vec(bufLengths.map(len => len > 0.U))
@@ -125,10 +125,9 @@ class NetworkPacketBuffer[T <: Data](
   val outIdxReg = RegEnable(outIdx, ren)
 
   io.stream.out.valid := outValidReg
-  io.stream.out.bits.data := buffer.io.read.data
+  io.stream.out.bits.data := buffer.io.read.data.data
   io.stream.out.bits.last := outLastReg
-  io.stream.out.bits.keep := outKeepReg 
-
+  io.stream.out.bits.keep := buffer.io.read.data.keep
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := headerType.fromBits(Cat(headers(outPhase).reverse))
@@ -141,7 +140,7 @@ class NetworkPacketBuffer[T <: Data](
   buffer.io.read.addr := bufTail
   buffer.io.write.en := wen
   buffer.io.write.addr := bufHead
-  buffer.io.write.data := io.stream.in.bits.data
+  buffer.io.write.data := Cat(io.stream.in.bits.data, io.stream.in.bits.keep).asTypeOf(new DataKeepType(wordBits))
 
   val startDropping =
     (inPhase === outPhase && bufValid(inPhase)) ||

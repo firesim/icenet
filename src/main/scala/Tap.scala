@@ -37,12 +37,17 @@ class NetworkTap[T <: Data](
   val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
 
   // note: if wordBytes > headerBytes then the header will be taken from the most significant bits
-  val header = if (wordBytes > headerBytes){
-    (headerDataVec.asUInt() >> (wordBits - headerBytes*8)).asTypeOf(headerTyp)
-  }
-  else {
-    headerDataVec.asUInt().asTypeOf(headerTyp)
-  }
+  // AJG: instead take from lsb
+  //val headerTemp = headerVec.asUInt().asTypeOf(new EthernetHeader)
+  val header = headerVec.asUInt().asTypeOf(headerTyp)
+  //printf("Header from tap: uint(0x%x) = ethType(0x%x) srcMac(0x%x) dstMac(0x%x) padding(0x%x)\n", headerVec.asUInt(), headerTemp.ethType, headerTemp.srcmac, headerTemp.dstmac, headerTemp.padding)
+  //printf("Header from tap: uint(0x%x)\n", headerVec.asUInt())
+  //val header = if (wordBytes > headerBytes){
+  //  (headerVec.asUInt() >> (wordBits - headerBytes*8)).asTypeOf(headerTyp)
+  //}
+  //else {
+  //  headerVec.asUInt().asTypeOf(headerTyp)
+  //}
 
   val idxBits = if(headerWords < 2) 1 else log2Ceil(headerWords)
   val headerIdx = RegInit(0.U(idxBits.W))
@@ -72,7 +77,9 @@ class NetworkTap[T <: Data](
   io.passthru.bits.last := MuxLookup(Cat(state, hasTapout), false.B, Seq(
     Cat(s_output_header, false.B) -> (bodyLess && headerIdx === headerLen),
     Cat(s_forward_body,  false.B) -> io.inflow.bits.last))
-  io.passthru.bits.keep := DontCare
+  io.passthru.bits.keep := MuxLookup(Cat(state, hasTapout), 0.U, Seq(
+    Cat(s_output_header, false.B) -> ~0.U(wordBytes.W),
+    Cat(s_forward_body,  false.B) -> io.inflow.bits.keep))
 
   io.tapout.zip(route).foreach { case (tapout, sel) =>
     tapout.valid := MuxLookup(Cat(state, sel), false.B, Seq(
@@ -84,13 +91,15 @@ class NetworkTap[T <: Data](
     tapout.bits.last := MuxLookup(Cat(state, sel), false.B, Seq(
       Cat(s_output_header, true.B) -> (bodyLess && headerIdx === headerLen),
       Cat(s_forward_body,  true.B) -> io.inflow.bits.last))
-    tapout.bits.keep := DontCare
+    tapout.bits.keep := MuxLookup(Cat(state, sel), 0.U, Seq(
+      Cat(s_output_header, true.B) -> ~0.U(wordBytes.W),
+      Cat(s_forward_body,  true.B) -> io.inflow.bits.keep))
   }
 
   when (state === s_collect_header && io.inflow.valid) {
     headerIdx := headerIdx + 1.U
-    headerDataVec(headerIdx) := io.inflow.bits.data
-    headerKeepVec(headerIdx) := io.inflow.bits.keep
+    
+    headerVec(headerIdx) := io.inflow.bits.data
 
     val headerLast = headerIdx === (headerWords-1).U
 
@@ -136,11 +145,16 @@ class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
 
   // send a payload using a ethernet header
   val sendPayloads = if (testWidth > 64){
-    // make sure ethernet header is in the MSB of the flit
-    Seq( Seq( BigInt( 0x800 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)), BigInt(23), BigInt(13), BigInt(56), BigInt(12) ),
-         Seq( BigInt( 0x800 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)) ),
-         Seq( BigInt( 0x801 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)), BigInt(22), BigInt(16) ),
+    // make sure ethernet header is in the LSB of the flit
+    Seq( Seq( BigInt( 0x800 ) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS), BigInt(23), BigInt(13), BigInt(56), BigInt(12) ),
+         Seq( BigInt( 0x800 ) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) ),
+         Seq( BigInt( 0x801 ) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS), BigInt(22), BigInt(16) ),
          Seq( BigInt( 0 ) ) )
+    // make sure ethernet header is in the MSB of the flit
+    //Seq( Seq( BigInt( 0x800 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)), BigInt(23), BigInt(13), BigInt(56), BigInt(12) ),
+    //     Seq( BigInt( 0x800 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)) ),
+    //     Seq( BigInt( 0x801 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)), BigInt(22), BigInt(16) ),
+    //     Seq( BigInt( 0 ) ) )
   }
   else {
     // note: here the ethernet header is split between the 1st and 2nd flits
@@ -155,6 +169,7 @@ class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
 
   // create packets based off the send* section
   val genIn = Module(new PacketGen(sendLengths, sendData, sendKeep, netConfig))
+  genIn.io.start := io.start
 
   // create tapout data to check with
   val tapPayloads = sendPayloads.take(2)
@@ -174,14 +189,20 @@ class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
   }
   val checkPass = Module(new PacketCheck(passData, passKeep, passLast, netConfig))
 
-  // DUT
-  val tap = Module(new NetworkTap((header: EthernetHeader) => header.ethType === 0x800.U, headerType = new EthernetHeader, wordBytes = netConfig.NET_IF_WIDTH_BYTES))
-
-  genIn.io.start := io.start // create the packets
-  tap.io.inflow <> genIn.io.out // pass into DUT
-
   val tap = Module(new NetworkTap(
-    Seq((header: EthernetHeader) => header.ethType === 0x800.U)))
+    Seq((header: EthernetHeader) => header.ethType === 0x800.U), wordBytes = netConfig.NET_IF_WIDTH_BYTES))
+
+  // AJG: Debug
+  //when (genIn.io.out.fire()){
+  //  printf("genIn.out: data(0x%x) keep(0x%x) last(0x%x)\n", genIn.io.out.bits.data, genIn.io.out.bits.keep, genIn.io.out.bits.last)
+  //}
+  //when (tap.io.tapout(0).fire()){
+  //  printf("tapout: data(0x%x) keep(0x%x) last(0x%x)\n", tap.io.tapout(0).bits.data, tap.io.tapout(0).bits.keep, tap.io.tapout(0).bits.last)
+  //}
+  //when (tap.io.passthru.fire()){
+  //  printf("passthru: data(0x%x) keep(0x%x) last(0x%x)\n", tap.io.passthru.bits.data, tap.io.passthru.bits.keep, tap.io.passthru.bits.last)
+  //}
+
   tap.io.inflow <> genIn.io.out
   checkTap.io.in <> tap.io.tapout(0)
   checkPass.io.in <> tap.io.passthru

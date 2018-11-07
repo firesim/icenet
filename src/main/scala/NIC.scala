@@ -458,6 +458,15 @@ class IceNicWriterModule(outer: IceNicWriter)
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecv
 
+  //when (tl.a.fire()){
+  //  printf("Put to CPU Mem: fromSource(0x%x) toAddress(0x%x)\n", fromSource, toAddress)
+  //  printf("                data(0x%x)\n", streamShifter.io.stream.out.bits.data)
+  //}
+
+  //when (io.recv.comp.fire()){
+  //  printf("completion buffer: data(0x%x)\n", io.recv.comp.bits)
+  //}
+
   when (io.recv.req.fire()) {
     idx := 0.U
     baseAddr := io.recv.req.bits >> byteAddrBits.U
@@ -513,15 +522,14 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   })
 
   val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = config.NET_IF_WIDTH_BITS)
-  val ethHeader = new EthernetHeader
-  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets, headerType = ethHeader, wordBytes = config.NET_IF_WIDTH_BYTES))
+  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets, wordBytes = config.NET_IF_WIDTH_BYTES))
   buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
   writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
   writer.io.in <> (if (outer.tapFuncs.nonEmpty) {
-    val tap = Module(new NetworkTap(outer.tapFuncs, headerType = ethHeader, wordBytes = config.NET_IF_WIDTH_BYTES))
+    val tap = Module(new NetworkTap(outer.tapFuncs, wordBytes = config.NET_IF_WIDTH_BYTES))
     tap.io.inflow <> buffer.io.stream.out
     io.tap.get <> tap.io.tapout
     tap.io.passthru
@@ -590,6 +598,14 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     // connect externally
     recvPath.module.io.in <> io.ext.in
     io.ext.out <> sendPath.module.io.out
+
+    //when (sendPath.module.io.out.fire()){
+    //  printf("out sendpath: data(0x%x) keep(0x%x) last(0x%x)\n", sendPath.module.io.out.bits.data, sendPath.module.io.out.bits.keep, sendPath.module.io.out.bits.last)
+    //}
+
+    //when (recvPath.module.io.in.fire()){
+    //  printf("in recvpath: data(0x%x) keep(0x%x) last(0x%x)\n", recvPath.module.io.in.bits.data, recvPath.module.io.in.bits.keep, recvPath.module.io.in.bits.last)
+    //}
 
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit

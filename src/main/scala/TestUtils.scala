@@ -95,6 +95,13 @@ class PacketCheck(
     (a & bitmask) === (b & bitmask)
   }
 
+  //when (io.in.valid){
+  //  printf("Packet Check ----\n")
+  //  printf("  in: data(0x%x) keep(0x%x) last(0x%x)\n", io.in.bits.data, io.in.bits.keep, io.in.bits.last)
+  //  printf("want: data(0x%x) keep(0x%x) last(0x%x)\n", checkDataVec(checkIdx), checkKeepVec(checkIdx), checkLastVec(checkIdx))
+  //  printf("Packet Check Done ----\n")
+  //}
+
   // Everything should match (data, keep and last bits)
   assert(!io.in.valid ||
     (compareData(io.in.bits.data, checkDataVec(checkIdx), io.in.bits.keep) &&

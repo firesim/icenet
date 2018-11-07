@@ -118,8 +118,7 @@ class SimpleSwitchCrossbar(n: Int, ifWidthBits: Int) extends Module {
 
   for (i <- 0 until n) {
     val arb = Module(new HellaPeekingArbiter(
-      new StreamChannel(ifWidthBits), n,
-      (ch: StreamChannel) => ch.last, rr = true))
+      new StreamChannel(ifWidthBits), n, (ch: StreamChannel) => ch.last, rr = true))
     arb.io.in <> routers.map(r => r.io.out(i))
     io.out(i) <> arb.io.out
   }
@@ -148,7 +147,7 @@ class SimpleSwitch(address: BigInt, n: Int, netConfig: IceNetConfig)
       val streams = Vec(n, new StreamIO(netConfig.NET_IF_WIDTH_BITS))
     })
 
-    val inBuffers  = Seq.fill(n) { Module(new NetworkPacketBuffer(nPackets = 2, headerType = new EthernetHeader, wordBytes = netConfig.NET_IF_WIDTH_BYTES)) }
+    val inBuffers  = Seq.fill(n) { Module(new NetworkPacketBuffer(nPackets = 2, wordBytes = netConfig.NET_IF_WIDTH_BYTES)) }
     val outBuffers = Seq.fill(n) {
       val ethWords = if(netConfig.NET_IF_WIDTH_BITS > ETH_MAX_BYTES * 8) 1 else (ETH_MAX_BYTES * 8)/netConfig.NET_IF_WIDTH_BITS
       Module(new Queue(new StreamChannel(netConfig.NET_IF_WIDTH_BITS), ethWords))
@@ -253,6 +252,15 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
   assert(!headerDone || !io.net.in.valid ||
     io.net.in.bits.data === sendPacket(inCnt),
     "BasicSwitchTest: Returned payload incorrect")
+
+  //printf("---Client---\n")
+  //when(io.net.in.fire()){
+  //  printf("Recieved: recvPacket(%d) := 0x%x\n", inCnt, io.net.in.bits.data)
+  //}
+  //when(io.net.out.fire()){
+  //  printf("Sending: sendPacket(%d) := 0x%x\n", outCnt, io.net.out.bits.data) 
+  //}
+  //printf("---Client Done---\n")
 
   io.finished := state === s_done
   io.net.out.valid := state === s_send
