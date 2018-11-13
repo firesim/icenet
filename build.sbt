@@ -4,4 +4,4 @@ version := "1.0"
 
 name := "icenet"
 
-scalaVersion := "2.11.12"
+scalaVersion := "2.12.4"

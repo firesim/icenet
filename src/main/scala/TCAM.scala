@@ -51,7 +51,7 @@ class TCAMModule(outer: TCAM) extends LazyModuleImp(outer) {
 
   tl.d.valid := acq.valid
   acq.ready := tl.d.ready
-  tl.d.bits := edge.AccessAck(acq.bits, 0.U, false.B)
+  tl.d.bits := edge.AccessAck(acq.bits, 0.U)
   tl.d.bits.opcode := Mux(edge.hasData(acq.bits),
     TLMessages.AccessAck, TLMessages.AccessAckData)
   tl.d.bits.data := Mux(regsel, maskArr(wordaddr), dataArr(wordaddr))

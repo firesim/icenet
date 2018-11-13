@@ -36,6 +36,7 @@ object EthernetHeader {
     header.dstmac := dstmac
     header.srcmac := srcmac
     header.ethType := ethType
+    header.padding := DontCare
     header
   }
 }
