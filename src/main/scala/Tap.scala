@@ -35,19 +35,7 @@ class NetworkTap[T <: Data](
   assert(n > 0, "NetworkTap must have at least one output tap")
 
   val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
-
-  // note: if wordBytes > headerBytes then the header will be taken from the most significant bits
-  // AJG: instead take from lsb
-  //val headerTemp = headerVec.asUInt().asTypeOf(new EthernetHeader)
   val header = headerVec.asUInt().asTypeOf(headerTyp)
-  //printf("Header from tap: uint(0x%x) = ethType(0x%x) srcMac(0x%x) dstMac(0x%x) padding(0x%x)\n", headerVec.asUInt(), headerTemp.ethType, headerTemp.srcmac, headerTemp.dstmac, headerTemp.padding)
-  //printf("Header from tap: uint(0x%x)\n", headerVec.asUInt())
-  //val header = if (wordBytes > headerBytes){
-  //  (headerVec.asUInt() >> (wordBits - headerBytes*8)).asTypeOf(headerTyp)
-  //}
-  //else {
-  //  headerVec.asUInt().asTypeOf(headerTyp)
-  //}
 
   val idxBits = if(headerWords < 2) 1 else log2Ceil(headerWords)
   val headerIdx = RegInit(0.U(idxBits.W))
@@ -150,11 +138,6 @@ class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
          Seq( BigInt( 0x800 ) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) ),
          Seq( BigInt( 0x801 ) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS), BigInt(22), BigInt(16) ),
          Seq( BigInt( 0 ) ) )
-    // make sure ethernet header is in the MSB of the flit
-    //Seq( Seq( BigInt( 0x800 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)), BigInt(23), BigInt(13), BigInt(56), BigInt(12) ),
-    //     Seq( BigInt( 0x800 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)) ),
-    //     Seq( BigInt( 0x801 ) << ((ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) + (testWidth - ETH_HEAD_BYTES*8)), BigInt(22), BigInt(16) ),
-    //     Seq( BigInt( 0 ) ) )
   }
   else {
     // note: here the ethernet header is split between the 1st and 2nd flits
@@ -191,17 +174,6 @@ class NetworkTapTest(testWidth: Int = 64) extends UnitTest {
 
   val tap = Module(new NetworkTap(
     Seq((header: EthernetHeader) => header.ethType === 0x800.U), wordBytes = netConfig.NET_IF_WIDTH_BYTES))
-
-  // AJG: Debug
-  //when (genIn.io.out.fire()){
-  //  printf("genIn.out: data(0x%x) keep(0x%x) last(0x%x)\n", genIn.io.out.bits.data, genIn.io.out.bits.keep, genIn.io.out.bits.last)
-  //}
-  //when (tap.io.tapout(0).fire()){
-  //  printf("tapout: data(0x%x) keep(0x%x) last(0x%x)\n", tap.io.tapout(0).bits.data, tap.io.tapout(0).bits.keep, tap.io.tapout(0).bits.last)
-  //}
-  //when (tap.io.passthru.fire()){
-  //  printf("passthru: data(0x%x) keep(0x%x) last(0x%x)\n", tap.io.passthru.bits.data, tap.io.passthru.bits.keep, tap.io.passthru.bits.last)
-  //}
 
   tap.io.inflow <> genIn.io.out
   checkTap.io.in <> tap.io.tapout(0)

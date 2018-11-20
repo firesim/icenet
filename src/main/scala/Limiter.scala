@@ -8,6 +8,8 @@ import IceNetConsts._
 
 /**
  * This specifies the particular settings to limit the bandwidth of the NIC.
+ * Note: Since this is parameterized, you have to set the fields correctly in software
+ *       (Cannot be a static assignment with a MMIO reg)
  */
 class RateLimiterSettings(netConfig: IceNetConfig) extends Bundle {
   val incBits = log2Ceil(netConfig.RLIMIT_MAX_INC)

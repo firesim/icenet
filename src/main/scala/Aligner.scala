@@ -62,9 +62,6 @@ class StreamShifter(netConfig: IceNetConfig) extends Module {
     io.stream.out.bits.last := io.stream.in.bits.last 
   }
 
-  // I think this is
-  //io.stream.out.bits.last := Mux(addrOffset > 0.U, doneWithOutput, RegNext(io.stream.in.valid && io.stream.out.bits.last)) // send last signal when there are no more bytes to send
-
   when (io.stream.in.fire() && io.stream.out.fire()) {
     // when something enters and something else leaves
     send_data := (backup_data & lowerMaskBits) | (rotated_data & upperMaskBits)

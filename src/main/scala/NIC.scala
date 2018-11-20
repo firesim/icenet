@@ -35,7 +35,7 @@ case class NICConfig(
   inBufPackets: Int = 2,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10){
+  ctrlQueueDepth: Int = 20){
     val NET_IF_WIDTH_BYTES = NET_IF_WIDTH_BITS / 8
     def NET_FULL_KEEP = ~0.U(NET_IF_WIDTH_BYTES.W)
     val outBufFlits = 2 * ETH_MAX_BYTES / NET_IF_WIDTH_BYTES
@@ -441,7 +441,10 @@ class IceNicWriterModule(outer: IceNicWriter)
   val lgSize = Mux(newBlock, reqSize, headSize) +& byteAddrBits.U
 
   // sub extra bytes since the comp number is a multiple of flit size and you may send less than a flit
-  val subBytesRecv = RegInit(0.U(addrBits.W))
+  val waitForStart = RegInit(false.B) // To keep track of when the state changes for the first time
+  val subBytesRecvStart = RegInit(0.U(addrBits.W)) // If the req address is not aligned to the flit the output will be shifted to align the xact to the right addr
+                                                   // This accounts for the bytes not used in the first TL xact
+  val subBytesRecvEnd = RegInit(0.U(addrBits.W)) // Used to keep track of the end of the packet and account for the amt of bytes not sent out on the last TL xact
 
   // output data over TL to CPU memory
   io.recv.req.ready := state === s_idle
@@ -456,16 +459,7 @@ class IceNicWriterModule(outer: IceNicWriter)
   io.in.ready := (state === s_data) && canSend && streamShifter.io.stream.in.ready
   streamShifter.io.stream.out.ready := (state === s_data) && canSend && tl.a.ready
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
-  io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecv
-
-  //when (tl.a.fire()){
-  //  printf("Put to CPU Mem: fromSource(0x%x) toAddress(0x%x)\n", fromSource, toAddress)
-  //  printf("                data(0x%x)\n", streamShifter.io.stream.out.bits.data)
-  //}
-
-  //when (io.recv.comp.fire()){
-  //  printf("completion buffer: data(0x%x)\n", io.recv.comp.bits)
-  //}
+  io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecvEnd - subBytesRecvStart
 
   when (io.recv.req.fire()) {
     idx := 0.U
@@ -473,6 +467,7 @@ class IceNicWriterModule(outer: IceNicWriter)
     addrOffset := io.recv.req.bits & maskOffset
     beatsLeft := 0.U
     state := s_data
+    waitForStart := true.B
   }
 
   when (tl.a.fire()) {
@@ -485,9 +480,15 @@ class IceNicWriterModule(outer: IceNicWriter)
     } .otherwise {
       beatsLeft := beatsLeft - 1.U
     }
+
+    when (waitForStart) {
+      waitForStart := false.B
+      subBytesRecvStart := PopCount(streamShifter.io.stream.out.bits.keep)
+    }
+
     idx := idx + 1.U
     when (streamShifter.io.stream.out.bits.last) { 
-      subBytesRecv := addrOffset + PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
+      subBytesRecvEnd := addrOffset + PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
       state := s_complete 
     }
   }
@@ -598,14 +599,6 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     // connect externally
     recvPath.module.io.in <> io.ext.in
     io.ext.out <> sendPath.module.io.out
-
-    //when (sendPath.module.io.out.fire()){
-    //  printf("out sendpath: data(0x%x) keep(0x%x) last(0x%x)\n", sendPath.module.io.out.bits.data, sendPath.module.io.out.bits.keep, sendPath.module.io.out.bits.last)
-    //}
-
-    //when (recvPath.module.io.in.fire()){
-    //  printf("in recvpath: data(0x%x) keep(0x%x) last(0x%x)\n", recvPath.module.io.in.bits.data, recvPath.module.io.in.bits.keep, recvPath.module.io.in.bits.last)
-    //}
 
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
@@ -887,6 +880,10 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
   }
 }
 
+/**
+ * Main test that recieves data through the recv path and checkts to make sure that 
+ * data was recieved correctly
+ */
 class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
   val recvReqs = Seq(0, 1440, 1456)
   // the 90-flit packet should be dropped

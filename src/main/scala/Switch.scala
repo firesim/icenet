@@ -210,8 +210,6 @@ class SwitchTestSetup(macaddrs: Seq[Long])
   }
 }
 
-
-
 class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
@@ -253,15 +251,6 @@ class BasicSwitchTestClient(srcmac: Long, dstmac: Long, netConfig: IceNetConfig)
     io.net.in.bits.data === sendPacket(inCnt),
     "BasicSwitchTest: Returned payload incorrect")
 
-  //printf("---Client---\n")
-  //when(io.net.in.fire()){
-  //  printf("Recieved: recvPacket(%d) := 0x%x\n", inCnt, io.net.in.bits.data)
-  //}
-  //when(io.net.out.fire()){
-  //  printf("Sending: sendPacket(%d) := 0x%x\n", outCnt, io.net.out.bits.data) 
-  //}
-  //printf("---Client Done---\n")
-
   io.finished := state === s_done
   io.net.out.valid := state === s_send
   io.net.out.bits.keep := netConfig.NET_FULL_KEEP 
@@ -291,15 +280,6 @@ class BasicSwitchTestServer(netConfig: IceNetConfig) extends Module {
   io.net.out.bits.keep := netConfig.NET_FULL_KEEP 
   io.net.out.bits.data := sendPacket(sendCnt)
   io.net.out.bits.last := sendCnt === (sendPacket.size-1).U
-
-  //printf("---Server---\n")
-  //when(io.net.in.fire()){
-  //  printf("Recieved: recvPacket(%d) := 0x%x\n", recvCnt, io.net.in.bits.data)
-  //}
-  //when(io.net.out.fire()){
-  //  printf("Sending: sendPacket(%d) := 0x%x\n", sendCnt, io.net.out.bits.data) 
-  //}
-  //printf("---Server Done---\n")
 
   when (io.net.in.fire()) { recvPacket(recvCnt) := io.net.in.bits.data }
   when (recvDone) { sending := true.B }

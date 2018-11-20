@@ -8,7 +8,7 @@ import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
 /**
- * Description of BufferBRAM class
+ * Buffer that holds items using the Mem construct
  * 
  * @param n size of buffer
  * @param typ type of data to store
@@ -95,7 +95,7 @@ class NetworkPacketBuffer[T <: Data](
   val buffer = Module(new BufferBRAM(bufWords, new DataKeepType(wordBits)))
   val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
   val bufLengths = RegInit(VecInit(Seq.fill(nPackets) { 0.U(idxBits.W) }))
-  val bufValid = Vec(bufLengths.map(len => len > 0.U))
+  val bufValid = VecInit(bufLengths.map(len => len > 0.U))
 
   val bufHead = RegInit(0.U(idxBits.W))
   val bufTail = RegInit(0.U(idxBits.W))
@@ -114,11 +114,11 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
-  val outLast = Vec(bufLengths.map(len => outIdx === (len - 1.U)))
+  val outLast = VecInit(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValidReg = RegInit(false.B)
 
   val ren = (io.stream.out.ready || !outValidReg) && bufValid(outPhase) && !bufEmpty
-  val wen = Wire(init = false.B)
+  val wen = WireInit(false.B)
   val hwen = wen && inIdx < headerWords.U
 
   val outLastReg = RegEnable(outLast(outPhase), ren)
