@@ -19,7 +19,8 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 10,
+  creditTracker: Option[CreditTrackerParams] = None)
 
 case object NICKey extends Field[NICConfig]
 
@@ -405,10 +406,12 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
     val tap = outer.tapFuncs.nonEmpty.option(
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
+    val buf_free = Output(Bool())
   })
 
   val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
   buffer.io.stream.in <> io.in
+  io.buf_free := buffer.io.stream.out.fire() && buffer.io.stream.out.bits.last
 
   val writer = outer.writer.module
   writer.io.length := buffer.io.length
@@ -475,8 +478,18 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     recvPath.module.io.recv <> control.module.io.recv
 
     // connect externally
-    recvPath.module.io.in <> io.ext.in
-    io.ext.out <> sendPath.module.io.out
+    if (config.creditTracker.nonEmpty) {
+      val tracker = Module(new CreditTracker(
+        config.creditTracker.get.copy(inCredits = config.inBufPackets)))
+      recvPath.module.io.in <> tracker.io.int.in
+      tracker.io.int.out <> sendPath.module.io.out
+      io.ext.out <> tracker.io.ext.out
+      tracker.io.ext.in <> io.ext.in
+      tracker.io.in_free := recvPath.module.io.buf_free
+    } else {
+      recvPath.module.io.in <> io.ext.in
+      io.ext.out <> sendPath.module.io.out
+    }
 
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
