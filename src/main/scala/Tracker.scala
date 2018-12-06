@@ -97,7 +97,7 @@ class CreditTracker(params: CreditTrackerParams) extends Module {
 
   val extOutArb = Module(new HellaPeekingArbiter(
     new StreamChannel(NET_IF_WIDTH), 2, (ch: StreamChannel) => ch.last))
-  extOutArb.io.in <> Seq(inTrack.io.out, outTrack.io.ext.out)
+  extOutArb.io.in <> Seq(inTrack.io.out, outTrack.io.ext.out).map(Queue(_, 2))
   io.ext.out <> extOutArb.io.out
 }
 
