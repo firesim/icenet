@@ -10,7 +10,8 @@ import IceNetConsts._
 case class CreditTrackerParams(
   inCredits: Int = 0,
   outMaxCredits: Int = 255,
-  updatePeriod: Int = 255)
+  updatePeriod: Int = 255,
+  outTimeout: Option[Int] = None)
 
 class CreditInTracker(params: CreditTrackerParams) extends Module {
   val io = IO(new Bundle {
@@ -77,6 +78,18 @@ class CreditOutTracker(params: CreditTrackerParams) extends Module {
   io.ext.out.valid := io.int.out.valid && canForward
   io.ext.out.bits  := io.int.out.bits
   io.int.out.ready := io.ext.out.ready && canForward
+
+  params.outTimeout.foreach { timeoutInit =>
+    val timeout = RegInit(timeoutInit.U)
+
+    when (canForward) {
+      timeout := timeoutInit.U
+    } .elsewhen (timeout =/= 0.U) {
+      timeout := timeout - 1.U
+    }
+
+    assert(timeout =/= 0.U, "CreditTracker timed out waiting for update")
+  }
 }
 
 class CreditTracker(params: CreditTrackerParams) extends Module {
