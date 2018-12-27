@@ -2,7 +2,7 @@ package icenet
 
 import chisel3._
 import chisel3.util._
-import freechips.rocketchip.util.HellaPeekingArbiter
+import freechips.rocketchip.util.{HellaPeekingArbiter, LatencyPipe}
 import freechips.rocketchip.unittest.UnitTest
 import testchipip.{StreamIO, ValidStreamIO, StreamChannel}
 import IceNetConsts._
@@ -114,21 +114,6 @@ class CreditTracker(params: CreditTrackerParams) extends Module {
   io.ext.out <> extOutArb.io.out
 }
 
-class DelayQueue[T <: Data](typ: T, stages: Int) extends Module {
-  val io = IO(new Bundle {
-    val enq = Flipped(Decoupled(typ))
-    val deq = Decoupled(typ)
-  })
-
-  val queues = Seq.fill(stages) { Module(new Queue(typ, 1, pipe=true)) }
-
-  queues.head.io.enq <> io.enq
-  queues.init.zip(queues.tail).foreach { case (upper, lower) =>
-    lower.io.enq <> upper.io.deq
-  }
-  io.deq <> queues.last.io.deq
-}
-
 class CreditTrackerTest extends UnitTest {
   val s_idle :: s_send :: s_wait :: s_done :: Nil = Enum(4)
   val state = RegInit(s_idle)
@@ -138,23 +123,23 @@ class CreditTrackerTest extends UnitTest {
   val testLast = Vec(Seq(false, false, true, false, true, true).map(_.B))
 
   val tracker = Module(new CreditTracker(CreditTrackerParams(2)))
-  val queue = Module(new DelayQueue(new StreamChannel(NET_IF_WIDTH), 10))
+  val queue = Module(new LatencyPipe(new StreamChannel(NET_IF_WIDTH), 10))
 
   val (outIdx, outDone) = Counter(tracker.io.int.out.fire(), testData.size)
-  val (inIdx, inDone) = Counter(queue.io.deq.fire(), testData.size)
+  val (inIdx, inDone) = Counter(queue.io.out.fire(), testData.size)
 
   tracker.io.ext.in <> tracker.io.ext.out
-  tracker.io.in_free := queue.io.deq.fire() && queue.io.deq.bits.last
+  tracker.io.in_free := queue.io.out.fire() && queue.io.out.bits.last
   tracker.io.int.out.valid := state === s_send
   tracker.io.int.out.bits.data := testData(outIdx)
   tracker.io.int.out.bits.last := testLast(outIdx)
   tracker.io.int.out.bits.keep := NET_FULL_KEEP
-  queue.io.enq <> tracker.io.int.in
-  queue.io.deq.ready := true.B
+  queue.io.in <> tracker.io.int.in
+  queue.io.out.ready := true.B
 
-  assert(!queue.io.deq.valid ||
-    (queue.io.deq.bits.data === testData(inIdx) &&
-     queue.io.deq.bits.last === testLast(inIdx)),
+  assert(!queue.io.out.valid ||
+    (queue.io.out.bits.data === testData(inIdx) &&
+     queue.io.out.bits.last === testLast(inIdx)),
    "CreditTrackerTest: data or last does not match")
 
   assert(!tracker.io.ext.out.valid || tracker.io.ext.in.ready,
