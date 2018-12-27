@@ -151,3 +151,39 @@ class CreditTrackerTest extends UnitTest {
 
   io.finished := state === s_done
 }
+
+class CreditPipe(latency: Int, params: CreditTrackerParams) extends Module {
+  val io = IO(new Bundle {
+    val left = new StreamIO(NET_IF_WIDTH)
+    val right = new StreamIO(NET_IF_WIDTH)
+  })
+
+  val lrbuffer = Module(new NetworkPacketBuffer(params.inCredits))
+  val rlbuffer = Module(new NetworkPacketBuffer(params.inCredits))
+
+  val lrtracker = Module(new CreditTracker(params))
+  val rltracker = Module(new CreditTracker(params))
+
+  io.left  <> NetDelay(lrtracker.io.ext, latency/2)
+  io.right <> NetDelay(rltracker.io.ext, latency/2)
+
+  lrbuffer.io.stream.in <> lrtracker.io.int.in
+  rlbuffer.io.stream.in <> rltracker.io.int.in
+
+  lrtracker.io.int.out <> rlbuffer.io.stream.out
+  rltracker.io.int.out <> lrbuffer.io.stream.out
+
+  val lrbufout = lrbuffer.io.stream.out
+  val rlbufout = rlbuffer.io.stream.out
+
+  lrtracker.io.in_free := lrbufout.fire() && lrbufout.bits.last
+  rltracker.io.in_free := rlbufout.fire() && rlbufout.bits.last
+}
+
+object CreditPipe {
+  def apply(right: StreamIO, latency: Int, params: CreditTrackerParams): StreamIO = {
+    val pipe = Module(new CreditPipe(latency, params))
+    pipe.io.right.flipConnect(right)
+    pipe.io.left
+  }
+}

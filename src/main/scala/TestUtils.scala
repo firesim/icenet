@@ -2,8 +2,9 @@ package icenet
 
 import chisel3._
 import chisel3.util._
+import freechips.rocketchip.util.LatencyPipe
 import scala.math.max
-import testchipip.StreamChannel
+import testchipip.{StreamChannel, StreamIO}
 import IceNetConsts._
 
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
@@ -82,4 +83,22 @@ class PacketCheck(
       io.in.bits.last === checkLastVec(checkIdx)),
     "PacketCheck: input does not match")
 
+}
+
+class NetDelay(latency: Int) extends Module {
+  val io = IO(new Bundle {
+    val left = new StreamIO(NET_IF_WIDTH)
+    val right = Flipped(new StreamIO(NET_IF_WIDTH))
+  })
+
+  io.left.out <> LatencyPipe(io.right.out, latency)
+  io.right.in <> LatencyPipe(io.left.in,   latency)
+}
+
+object NetDelay {
+  def apply(right: StreamIO, latency: Int): StreamIO = {
+    val delay = Module(new NetDelay(latency))
+    delay.io.right <> right
+    delay.io.left
+  }
 }
