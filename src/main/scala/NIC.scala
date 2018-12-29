@@ -409,7 +409,8 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val buf_free = Output(Bool())
   })
 
-  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
+  val buffer = Module(new NetworkPacketBuffer(
+    config.inBufPackets, dropless = config.creditTracker.nonEmpty))
   buffer.io.stream.in <> io.in
   io.buf_free := buffer.io.stream.out.fire() && buffer.io.stream.out.bits.last
 

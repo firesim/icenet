@@ -43,7 +43,8 @@ class NetworkPacketBuffer[T <: Data](
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
     headerType: T = new EthernetHeader,
-    wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
+    wordBytes: Int = NET_IF_WIDTH / 8,
+    dropless: Boolean = false) extends Module {
 
   val bufWordsPerPacket = bufBytesPerPacket / wordBytes
   val maxWords = maxBytes / wordBytes
@@ -153,7 +154,11 @@ class NetworkPacketBuffer[T <: Data](
       } .otherwise {
         wen := false.B
         revertHead := inIdx =/= 0.U
-        printf("WARNING: dropped packet with %d flits\n", inIdx + 1.U)
+        if (dropless) {
+          assert(false.B, "Packet dropped by buffer")
+        } else {
+          printf("WARNING: dropped packet with %d flits\n", inIdx + 1.U)
+        }
       }
       inIdx := 0.U
       inDrop := false.B
