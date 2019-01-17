@@ -27,7 +27,7 @@ class NetworkTap[T <: Data](
   assert(n > 0, "NetworkTap must have at least one output tap")
 
   val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
-  val header = headerTyp.fromBits(headerVec.toBits)
+  val header = headerVec.asTypeOf(headerTyp)
 
   val idxBits = log2Ceil(headerWords)
   val headerIdx = RegInit(0.U(idxBits.W))

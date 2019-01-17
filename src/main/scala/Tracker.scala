@@ -119,8 +119,8 @@ class CreditTrackerTest extends UnitTest {
   val state = RegInit(s_idle)
 
   // Make sure leading numbers are all even
-  val testData = Vec(Seq(0, 5, 7, 28 << 16, 11, 34 << 16).map(_.U(NET_IF_WIDTH.W)))
-  val testLast = Vec(Seq(false, false, true, false, true, true).map(_.B))
+  val testData = VecInit(Seq(0, 5, 7, 28 << 16, 11, 34 << 16).map(_.U(NET_IF_WIDTH.W)))
+  val testLast = VecInit(Seq(false, false, true, false, true, true).map(_.B))
 
   val tracker = Module(new CreditTracker(CreditTrackerParams(2)))
   val queue = Module(new LatencyPipe(new StreamChannel(NET_IF_WIDTH), 10))

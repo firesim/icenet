@@ -44,7 +44,7 @@ trait IceNicControllerModule extends HasRegMap {
   implicit val p: Parameters
   val io: IceNicControllerBundle
 
-  val sendCompDown = Wire(init = false.B)
+  val sendCompDown = WireInit(false.B)
 
   val qDepth = p(NICKey).ctrlQueueDepth
   require(qDepth < (1 << 8))
@@ -597,20 +597,20 @@ class IceNicTestSendDriver(
          s_send :: s_done :: Nil) = Enum(5)
     val state = RegInit(s_start)
 
-    val sendReqVec = Vec(sendReqs.map {
+    val sendReqVec = VecInit(sendReqs.map {
       case (addr, len, part) => Cat(part.B, len.U(lenBits.W), addr.U(addrBits.W))})
 
-    val sendReqAddrVec = Vec(sendReqs.map{case (addr, _, _) => addr.U(addrBits.W)})
+    val sendReqAddrVec = VecInit(sendReqs.map{case (addr, _, _) => addr.U(addrBits.W)})
     val sendReqCounts = sendReqs.map { case (_, len, _) => len / beatBytes }
-    val sendReqCountVec = Vec(sendReqCounts.map(_.U))
-    val sendReqBase = Vec((0 +: (1 until sendReqs.size).map(
+    val sendReqCountVec = VecInit(sendReqCounts.map(_.U))
+    val sendReqBase = VecInit((0 +: (1 until sendReqs.size).map(
       i => sendReqCounts.slice(0, i).reduce(_ + _))).map(_.U(addrBits.W)))
     val maxMemCount = sendReqCounts.reduce(max(_, _))
     val totalMemCount = sendReqCounts.reduce(_ + _)
 
     require(totalMemCount == sendData.size)
 
-    val sendDataVec = Vec(sendData.map(_.U(dataBits.W)))
+    val sendDataVec = VecInit(sendData.map(_.U(dataBits.W)))
 
     val reqIdx = Reg(UInt(log2Ceil(sendReqs.size).W))
     val memIdx = Reg(UInt(log2Ceil(totalMemCount).W))
@@ -687,8 +687,8 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
          s_check_req :: s_check_resp :: s_done :: Nil) = Enum(6)
     val state = RegInit(s_start)
 
-    val recvReqVec = Vec(recvReqs.map(_.U(NET_IF_WIDTH.W)))
-    val recvDataVec = Vec(recvData.map(_.U(dataBits.W)))
+    val recvReqVec  = VecInit(recvReqs.map(_.U(NET_IF_WIDTH.W)))
+    val recvDataVec = VecInit(recvData.map(_.U(dataBits.W)))
 
     val reqIdx = Reg(UInt(log2Ceil(recvReqs.size).W))
     val memIdx = Reg(UInt(log2Ceil(recvData.size).W))
