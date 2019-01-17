@@ -22,12 +22,7 @@ class EthernetHeader extends Bundle {
   val padding = UInt(ETH_PAD_BITS.W)
 
   def toWords(w: Int = NET_IF_WIDTH) =
-    Vec(ETH_HEAD_BYTES * 8 / w, UInt(w.W)).fromBits(this.asUInt)
-
-  def fromWords(words: Seq[UInt], w: Int = NET_IF_WIDTH) = {
-    val headerWords = ETH_HEAD_BYTES * 8 / w
-    this.fromBits(Cat(words.take(headerWords).reverse))
-  }
+    this.asTypeOf(Vec(ETH_HEAD_BYTES * 8 / w, UInt(w.W)))
 }
 
 object EthernetHeader {
@@ -38,6 +33,11 @@ object EthernetHeader {
     header.ethType := ethType
     header.padding := DontCare
     header
+  }
+
+  def apply(words: Seq[UInt], w: Int = NET_IF_WIDTH) = {
+    val headerWords = ETH_HEAD_BYTES * 8 / w
+    Cat(words.take(headerWords).reverse).asTypeOf(new EthernetHeader)
   }
 }
 
