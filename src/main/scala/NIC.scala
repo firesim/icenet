@@ -23,6 +23,26 @@ case class NICConfig(
 
 case object NICKey extends Field[NICConfig]
 
+trait HasNICParameters {
+  implicit val p: Parameters
+  val nicExternal = p(NICKey)
+  val inBufPackets = nicExternal.inBufPackets
+  val outBufFlits = nicExternal.outBufFlits
+  val nMemXacts = nicExternal.nMemXacts
+  val maxAcquireBytes = nicExternal.maxAcquireBytes
+  val ctrlQueueDepth = nicExternal.ctrlQueueDepth
+  val creditTrackerParams = nicExternal.creditTracker
+}
+
+abstract class NICLazyModule(implicit p: Parameters)
+  extends LazyModule with HasNICParameters
+
+abstract class NICModule(implicit val p: Parameters)
+  extends Module with HasNICParameters
+
+abstract class NICBundle(implicit val p: Parameters)
+  extends Bundle with HasNICParameters
+
 class IceNicSendIO extends Bundle {
   val req = Decoupled(UInt(NET_IF_WIDTH.W))
   val comp = Flipped(Decoupled(Bool()))
@@ -39,13 +59,13 @@ trait IceNicControllerBundle extends Bundle {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
 
-trait IceNicControllerModule extends HasRegMap {
+trait IceNicControllerModule extends HasRegMap with HasNICParameters {
   implicit val p: Parameters
   val io: IceNicControllerBundle
 
   val sendCompDown = WireInit(false.B)
 
-  val qDepth = p(NICKey).ctrlQueueDepth
+  val qDepth = ctrlQueueDepth
   require(qDepth < (1 << 8))
 
   def queueCount[T <: Data](qio: QueueIO[T], depth: Int): UInt =
@@ -109,12 +129,10 @@ class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
 class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
-    extends LazyModule {
+    extends NICLazyModule {
   val reader = LazyModule(new IceNicReader)
   val node = TLIdentityNode()
   node := reader.node
-
-  val config = p(NICKey)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
@@ -127,7 +145,7 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
 
     reader.module.io.send <> io.send
 
-    val queue = Module(new ReservationBuffer(config.nMemXacts, config.outBufFlits))
+    val queue = Module(new ReservationBuffer(nMemXacts, outBufFlits))
     queue.io.alloc <> reader.module.io.alloc
     queue.io.in <> reader.module.io.out
 
@@ -153,19 +171,16 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
  * Send frames out
  */
 class IceNicReader(implicit p: Parameters)
-    extends LazyModule {
+    extends NICLazyModule {
   val node = TLHelper.makeClientNode(
-    name = "ice-nic-send", sourceId = IdRange(0, p(NICKey).nMemXacts))
+    name = "ice-nic-send", sourceId = IdRange(0, nMemXacts))
   lazy val module = new IceNicReaderModule(this)
 }
 
-class IceNicReaderModule(outer: IceNicReader)
-    extends LazyModuleImp(outer) {
-
-  val config = p(NICKey)
-  val maxBytes = config.maxAcquireBytes
-  val nXacts = config.nMemXacts
-  val outFlits = config.outBufFlits
+class IceNicReaderModule(outer: IceNicReader) extends LazyModuleImp(outer) {
+  val maxBytes = outer.maxAcquireBytes
+  val nXacts = outer.nMemXacts
+  val outFlits = outer.outBufFlits
 
   val io = IO(new Bundle {
     val send = Flipped(new IceNicSendIO)
@@ -292,10 +307,9 @@ class IceNicReaderModule(outer: IceNicReader)
   }
 }
 
-class IceNicWriter(implicit p: Parameters) extends LazyModule {
-  val nXacts = p(NICKey).nMemXacts
+class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
   val node = TLHelper.makeClientNode(
-    name = "ice-nic-recv", sourceId = IdRange(0, nXacts))
+    name = "ice-nic-recv", sourceId = IdRange(0, nMemXacts))
   lazy val module = new IceNicWriterModule(this)
 }
 
@@ -307,7 +321,7 @@ class IceNicWriterModule(outer: IceNicWriter)
     val length = Input(UInt(NET_LEN_BITS.W))
   })
 
-  val maxBytes = p(NICKey).maxAcquireBytes
+  val maxBytes = outer.maxAcquireBytes
   val (tl, edge) = outer.node.out(0)
   val beatBytes = tl.params.dataBits / 8
   val fullAddrBits = tl.params.addressBits
@@ -323,7 +337,7 @@ class IceNicWriterModule(outer: IceNicWriter)
   val idx = Reg(UInt(addrBits.W))
   val addrMerged = baseAddr + idx
 
-  val xactBusy = RegInit(0.U(outer.nXacts.W))
+  val xactBusy = RegInit(0.U(outer.nMemXacts.W))
   val xactOnehot = PriorityEncoderOH(~xactBusy)
 
   val maxBeats = maxBytes / beatBytes
@@ -331,7 +345,7 @@ class IceNicWriterModule(outer: IceNicWriter)
 
   val beatsLeft = Reg(UInt(beatIdBits.W))
   val headAddr = Reg(UInt(addrBits.W))
-  val headXact = Reg(UInt(log2Ceil(outer.nXacts).W))
+  val headXact = Reg(UInt(log2Ceil(outer.nMemXacts).W))
   val headSize = Reg(UInt(log2Ceil(beatIdBits + 1).W))
 
   val newBlock = beatsLeft === 0.U
@@ -397,9 +411,7 @@ class IceNicRecvPath(val tapFuncs: Seq[EthernetHeader => Bool] = Nil)
 }
 
 class IceNicRecvPathModule(outer: IceNicRecvPath)
-    extends LazyModuleImp(outer) {
-  val config = p(NICKey)
-
+    extends LazyModuleImp(outer) with HasNICParameters {
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
@@ -407,7 +419,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
   })
 
-  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
+  val buffer = Module(new NetworkPacketBuffer(inBufPackets))
   buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
@@ -445,7 +457,7 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
 class IceNIC(address: BigInt, beatBytes: Int = 8,
     tapOutFuncs: Seq[EthernetHeader => Bool] = Nil,
     nInputTaps: Int = 0)
-    (implicit p: Parameters) extends LazyModule {
+    (implicit p: Parameters) extends NICLazyModule {
 
   val control = LazyModule(new IceNicController(
     IceNicControllerParams(address, beatBytes)))
@@ -461,8 +473,6 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
   dmanode := TLWidthWidget(NET_IF_BYTES) := recvPath.node
 
   lazy val module = new LazyModuleImp(this) {
-    val config = p(NICKey)
-
     val io = IO(new Bundle {
       val ext = new NICIO
       val tapOut = tapOutFuncs.nonEmpty.option(
@@ -731,7 +741,7 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
   }
 }
 
-class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
+class IceNicRecvTest(implicit p: Parameters) extends NICLazyModule {
   val recvReqs = Seq(0, 1440, 1456)
   // The 90-flit packet should be dropped
   val recvLens = Seq(180, 2, 90, 8)
@@ -751,7 +761,7 @@ class IceNicRecvTest(implicit p: Parameters) extends LazyModule {
 
   xbar.node := recvDriver.node
   xbar.node := recvPath.node
-  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes) :=
+  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
     TLHelper.latency(MEM_LATENCY, xbar.node)
 
   lazy val module = new LazyModuleImp(this) {
@@ -846,7 +856,7 @@ class IceNicSendTestWrapper(implicit p: Parameters) extends UnitTest {
   io.finished := test.io.finished
 }
 
-class IceNicTest(implicit p: Parameters) extends LazyModule {
+class IceNicTest(implicit p: Parameters) extends NICLazyModule {
   val sendReqs = Seq(
     (0, 128, true),
     (144, 160, false),
@@ -872,7 +882,7 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
   xbar.node := recvDriver.node
   xbar.node := sendPath.node
   xbar.node := recvPath.node
-  mem.node := TLFragmenter(NET_IF_BYTES, p(NICKey).maxAcquireBytes) :=
+  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
     TLHelper.latency(MEM_LATENCY, xbar.node)
 
   lazy val module = new LazyModuleImp(this) {
