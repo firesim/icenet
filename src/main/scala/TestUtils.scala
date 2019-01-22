@@ -12,7 +12,7 @@ import IceNetConsts._
  * @param genData data to put into packets
  * @param genKeep keep associated with the data
  * @param netConfig passin configuration settings
- */ 
+ */
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], genKeep: Seq[BigInt], netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
@@ -64,7 +64,7 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], genKeep: Seq[BigInt], n
  * @param checkKeep the keep bytemask associated with the data
  * @param checkLast the last indicator for the bytes sent
  * @param netConfig passin configuration settings
- */ 
+ */
 class PacketCheck(
     checkData: Seq[BigInt],
     checkKeep: Seq[BigInt],

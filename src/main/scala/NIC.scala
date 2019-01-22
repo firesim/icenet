@@ -20,7 +20,7 @@ import IceNetConsts._
  *
  * @param NET_IF_WIDTH_BITS flit size in bits
  * @param NET_LEN_BITS length of the packet (the amt of bits needed to send the length)
- * @param mmioDataLenBits lend of the data given over MMIO
+ * @param mmioDataLenBits length of the data given over MMIO
  * @param inBufPackets amt of packets to buffer
  * @param nMemXacts this is the amt of xacts that can be inflight
  * @param maxAcquireBytes this is the size of the data that you can get from mem
@@ -368,7 +368,7 @@ class IceNicWriter(implicit p: Parameters) extends LazyModule {
 }
 
 /**
- * Module to write the received packets from the network to the CPU memory based off                                                                      │ 15     state := s_idle                                                                                                                                      
+ * Module to write the received packets from the network to the CPU memory based off
  * the addresses given in the receive request queue in the controller.
  */
 class IceNicWriterModule(outer: IceNicWriter)
@@ -404,7 +404,7 @@ class IceNicWriterModule(outer: IceNicWriter)
   streamShifter.io.stream.in.bits := io.in.bits
   streamShifter.io.addrOffsetBytes := addrOffset
 
-  val baseAddr = Reg(UInt(addrBits.W)) // base address of packet shift by beatBytes
+  val baseAddr = Reg(UInt(addrBits.W)) // base address of packet shifted by beatBytes
   val idx = Reg(UInt(addrBits.W)) // idx skipping over NET_IF_WIDTH...
   val addrMerged = baseAddr + idx // final unshifted address
 
@@ -424,7 +424,7 @@ class IceNicWriterModule(outer: IceNicWriter)
 
   // size of request to get
   val reqSize = MuxCase(0.U,
-    (log2Ceil(maxBytes / beatBytes) until 0 by -1).map(lgSize =>
+    (log2Ceil(maxBeats) until 0 by -1).map(lgSize =>
         (addrMerged(lgSize-1,0) === 0.U &&
           (io.length >> lgSize.U) =/= 0.U) -> lgSize.U))
 
@@ -459,6 +459,15 @@ class IceNicWriterModule(outer: IceNicWriter)
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecvEnd - subBytesRecvStart
 
+  // DEBUG: AJG:
+  //when (io.recv.comp.valid){
+  //  printf("io.recv.comp.bits(%d) = (%d) - subEnd(%d) - subStart(%d)\n",
+  //         (idx << byteAddrBits.U) - subBytesRecvEnd - subBytesRecvStart,
+  //         (idx << byteAddrBits.U),
+  //         subBytesRecvEnd,
+  //         subBytesRecvStart)
+  //}
+
   when (io.recv.req.fire()) {
     idx := 0.U
     baseAddr := io.recv.req.bits >> byteAddrBits.U
@@ -466,6 +475,12 @@ class IceNicWriterModule(outer: IceNicWriter)
     beatsLeft := 0.U
     waitForStart := true.B
     state := s_data
+
+    // DEBUG: AJG:
+    //printf("baseAddr(%x) addrOffset(%x) io.recv.req.bits(%x)\n",
+    //       io.recv.req.bits >> byteAddrBits.U,
+    //       io.recv.req.bits & maskOffset,
+    //       io.recv.req.bits)
   }
 
   when (tl.a.fire()) {
@@ -482,12 +497,26 @@ class IceNicWriterModule(outer: IceNicWriter)
     when (waitForStart) {
       waitForStart := false.B
       subBytesRecvStart := PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
+
+      // DEBUG: AJG:
+      //printf("subBytesRecvStart(%d) = PopCount(NET_FULL_KEEP)(%d) - PopCount(streamShifter...out...keep)(%d)(%x)\n",
+      //       PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep),
+      //       PopCount(config.NET_FULL_KEEP),
+      //       PopCount(streamShifter.io.stream.out.bits.keep),
+      //       streamShifter.io.stream.out.bits.keep)
     }
 
     idx := idx + 1.U
-    when (io.in.bits.last) {
+    when (streamShifter.io.stream.out.bits.last) {
       subBytesRecvEnd := PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
       state := s_complete
+
+      // DEBUG: AJG:
+      //printf("subBytesRecvEnd(%d) = PopCount(NET_FULL_KEEP)(%d) - PopCount(streamShifter...out...keep)(%d)(%x)\n",
+      //       PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep),
+      //       PopCount(config.NET_FULL_KEEP),
+      //       PopCount(streamShifter.io.stream.out.bits.keep),
+      //       streamShifter.io.stream.out.bits.keep)
     }
   }
 
@@ -539,9 +568,11 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
  *
  * @param netConfig passin network parameters
  */
-class NICIO(val netConfig: IceNetConfig) extends StreamIO(netConfig.NET_IF_WIDTH_BITS) {
+class NICIO(netConfig: IceNetConfig) extends StreamIO(netConfig.NET_IF_WIDTH_BITS) {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings(netConfig))
+
+  override def cloneType = (new NICIO(netConfig)).asInstanceOf[this.type]
 }
 
 /* 
@@ -954,8 +985,8 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
     BigInt("FEDCBA9876543210", 16),
     BigInt("00000000FDECBA98", 16))
   // bytemask indicating what recv bytes are valid
-  val recvKeep = Seq.fill(sendData.size) { BigInt(0xFF) }
-  // was is the last message send seq
+  val recvKeep = Seq(BigInt(0xFF), BigInt(0xFF), BigInt(0xFF), BigInt(0x0F))
+  // what is the last message send seq
   val recvLast = Seq(false, true, false, true)
 
   val sendPath = LazyModule(new IceNicSendPath)
@@ -964,9 +995,9 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
   val rom = LazyModule(new TLROM(0, 64,
     sendData.flatMap(
       data => (0 until 8).map(i => ((data >> (i * 8)) & 0xff).toByte)),
-    beatBytes = 8))
+    beatBytes = p(NICKey).NET_IF_WIDTH_BYTES))
 
-  rom.node := TLFragmenter(p(NICKey).NET_IF_WIDTH_BYTES, 16) := TLBuffer() := sendPath.node
+  rom.node := TLFragmenter(p(NICKey).NET_IF_WIDTH_BYTES, p(NICKey).maxAcquireBytes) := TLBuffer() := sendPath.node
 
   // limiter constants
   val RLIMIT_INC = 1

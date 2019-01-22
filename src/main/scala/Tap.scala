@@ -35,7 +35,7 @@ class NetworkTap[T <: Data](
   assert(n > 0, "NetworkTap must have at least one output tap")
 
   val headerVec = Reg(Vec(headerWords, UInt(wordBits.W)))
-  val header = headerVec.asUInt().asTypeOf(headerTyp) 
+  val header = headerVec.asUInt().asTypeOf(headerTyp)
 
   val idxBits = if(headerWords < 2) 1 else log2Ceil(headerWords)
   val headerIdx = RegInit(0.U(idxBits.W))
@@ -125,13 +125,13 @@ class NetworkTap[T <: Data](
 }
 
 /**
- * Unit test for the NetworkTap function
+ * Unit test for the NetworkTap class
  */
 class NetworkTapTest(netIfWidthBits: Int = 64) extends UnitTest {
 
   val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = netIfWidthBits)
 
-  // send a payload using a ehternet header
+  // send a payload using a ethernet header
   val sendPayloads = if (netIfWidthBits > 64){
     // make sure ethernet header is in the LSB of the flit
     Seq( Seq( BigInt(0x800) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS), BigInt(23), BigInt(13), BigInt(56), BigInt(12) ),
@@ -145,11 +145,11 @@ class NetworkTapTest(netIfWidthBits: Int = 64) extends UnitTest {
          Seq( BigInt(0L), BigInt(0x800L << ETH_MAC_BITS) ),
          Seq( BigInt(0L), BigInt(0x801L << ETH_MAC_BITS), BigInt(22), BigInt(16) ),
          Seq( BigInt(0L)) )
-  }     
+  }
 
   val sendLengths = sendPayloads.map(_.size)
   val sendData = sendPayloads.flatten
-  val sendKeep = Seq.fill(sendPayloads.size){ (BigInt(1) << (netConfig.NET_IF_WIDTH_BYTES)) - 1 }
+  val sendKeep = Seq.fill(sendPayloads.size) { (BigInt(1) << (netConfig.NET_IF_WIDTH_BYTES)) - 1 }
 
   // create packets based off the send* section
   val genIn = Module(new PacketGen(sendLengths, sendData, sendKeep, netConfig))
@@ -158,7 +158,7 @@ class NetworkTapTest(netIfWidthBits: Int = 64) extends UnitTest {
   // create tapout data to check with
   val tapPayloads = sendPayloads.take(2)
   val tapData = tapPayloads.flatten
-  // create a BigInt mask corresponding to a full mask 
+  // create a BigInt mask corresponding to a full mask
   val tapKeep = Seq.fill(tapData.size) { (BigInt(1) << (netConfig.NET_IF_WIDTH_BYTES)) - 1 }
   val tapLast = tapPayloads.flatMap {
     pl => (Seq.fill(pl.size-1) { false } ++ Seq(true))
@@ -168,7 +168,7 @@ class NetworkTapTest(netIfWidthBits: Int = 64) extends UnitTest {
   // create passthru data to check with
   val passPayloads = sendPayloads.drop(2)
   val passData = passPayloads.flatten
-  // create a BigInt mask corresponding to a full mask 
+  // create a BigInt mask corresponding to a full mask
   val passKeep = Seq.fill(passData.size) { (BigInt(1) << (netConfig.NET_IF_WIDTH_BYTES)) - 1 }
   val passLast = passPayloads.flatMap {
     pl => (Seq.fill(pl.size-1) { false } ++ Seq(true))

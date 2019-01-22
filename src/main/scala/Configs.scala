@@ -38,11 +38,11 @@ class WithIceNetUnitTestsAll extends Config((site, here, up) => {
                    Module(new BroadcastTestWrapper(n)(p)),
                    Module(new NetworkTapTest(n)),
                    Module(new RateLimiterTest(n)) ) ) ++
-    Seq( Module(new AlignerTest), // note: that these are not parameterized since you have to specify exact data for tests
-         Module(new StreamShifterTest),
-         Module(new StreamShifterZeroShiftTest),  // note: that the general NIC tests use the NICConfig params thus they
-         Module(new IceNicSendTestWrapper()(p)),  //       will break if the netIfWidthBits is greater than 64
-         Module(new IceNicRecvTestWrapper()(p)),
+    Seq( Module(new AlignerTest),                // note: that these are not parameterized since you have to specify
+         Module(new StreamShifterTest),          // exact data for tests
+         Module(new StreamShifterZeroShiftTest),
+         Module(new IceNicSendTestWrapper()(p)), // note: that the general NIC tests use the NICConfig params thus they
+         Module(new IceNicRecvTestWrapper()(p)), //       will break if the netIfWidthBits is greater than 64
          Module(new IceNicTestWrapper()(p)) )
   }
 })
