@@ -7,14 +7,11 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
 import testchipip.TLHelper
 
-class TCAMMatchIO(n: Int, dataBits: Int) extends Bundle {
+class TCAMMatchIO(val n: Int, val dataBits: Int) extends Bundle {
   val addrBits = log2Ceil(n)
   val data = Output(UInt(dataBits.W))
   val addr = Input(UInt(addrBits.W))
   val found = Input(Bool())
-
-  override def cloneType =
-    new TCAMMatchIO(n, dataBits).asInstanceOf[this.type]
 }
 
 class TCAM(address: BigInt, val n: Int, val dataBits: Int, val nPorts: Int)

@@ -157,29 +157,29 @@ class Aligner(netConfig: IceNetConfig) extends Module {
  */
 class AlignerTest extends UnitTest {
   // send two packets worth of information
-  val inData = Vec(
+  val inData = VecInit(
     "h0011223344556677".U,
     "h8899AABBCCDDEEFF".U,
     "h0123456789ABCDEF".U,
     "hFEDCBA9876543210".U)
-  val inKeep = Vec(
+  val inKeep = VecInit(
     "b11111100".U,
     "b01111000".U,
     "b00001111".U,
     "b11110000".U)
-  val inLast = Vec(false.B, false.B, true.B, true.B)
+  val inLast = VecInit(false.B, false.B, true.B, true.B)
 
   // output should have all valid bytes until the end
-  val outData = Vec(
+  val outData = VecInit(
     "hBBCC001122334455".U,
     "h000089ABCDEF99AA".U,
     "h00000000FEDCBA98".U)
-  val outKeep = Vec(
+  val outKeep = VecInit(
     "b11111111".U,
     "b00111111".U,
     "b00001111".U)
   // should still be two packets
-  val outLast = Vec(false.B, true.B, true.B)
+  val outLast = VecInit(false.B, true.B, true.B)
 
   val started = RegInit(false.B)
   val sending = RegInit(false.B)

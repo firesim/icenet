@@ -11,7 +11,7 @@ import IceNetConsts._
  * Note: Since this is parameterized, you have to set the fields correctly in software
  *       (Cannot be a static assignment with a MMIO reg)
  */ 
-class RateLimiterSettings(netConfig: IceNetConfig) extends Bundle {
+class RateLimiterSettings(val netConfig: IceNetConfig) extends Bundle {
   val    incBits = log2Ceil(netConfig.RLIMIT_MAX_INC)
   val periodBits = log2Ceil(netConfig.RLIMIT_MAX_PERIOD)
   val   sizeBits = log2Ceil(netConfig.RLIMIT_MAX_SIZE)
@@ -25,8 +25,6 @@ class RateLimiterSettings(netConfig: IceNetConfig) extends Bundle {
   val inc = UInt(incBits.W)
   val period = UInt(periodBits.W)
   val size = UInt(sizeBits.W)
-
-  override def cloneType = (new RateLimiterSettings(netConfig)).asInstanceOf[this.type]
 }
 
 /**

@@ -76,8 +76,8 @@ class CreditTrackerTest(netIfWidth: Int = 64) extends UnitTest {
   val state = RegInit(s_idle)
 
   // Make sure leading numbers are all even
-  val testData = Vec(Seq(0, 5, 7, 28, 11, 34).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
-  val testLast = Vec(Seq(false, false, true, false, true, true).map(_.B))
+  val testData = VecInit(Seq(0, 5, 7, 28, 11, 34).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
+  val testLast = VecInit(Seq(false, false, true, false, true, true).map(_.B))
 
   val tracker = Module(new CreditTracker(1, netConfig))
   val queue = Module(new DelayQueue(new StreamChannel(netConfig.NET_IF_WIDTH_BITS), 5))

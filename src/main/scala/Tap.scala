@@ -132,7 +132,7 @@ class NetworkTapTest(netIfWidthBits: Int = 64) extends UnitTest {
   val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = netIfWidthBits)
 
   // send a payload using a ehternet header
-  val sendPayloads = if (testWidth > 64){
+  val sendPayloads = if (netIfWidthBits > 64){
     // make sure ethernet header is in the LSB of the flit
     Seq( Seq( BigInt(0x800) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS), BigInt(23), BigInt(13), BigInt(56), BigInt(12) ),
          Seq( BigInt(0x800) << (ETH_HEAD_BYTES*8 - ETH_TYPE_BITS) ),

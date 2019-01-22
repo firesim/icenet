@@ -55,8 +55,6 @@ class EthernetHeader extends Bundle {
     val headerWords = if(w > (ETH_HEAD_BYTES * 8)) 1 else (ETH_HEAD_BYTES * 8)/w
     Cat(words.take(headerWords).reverse).asTypeOf(this)
   }
-
-  override def cloneType = (new EthernetHeader).asInstanceOf[this.type]
 }
 
 /**

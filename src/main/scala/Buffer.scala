@@ -51,8 +51,6 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 class DataKeepType(val w: Int) extends Bundle {
   val data = UInt(w.W)
   val keep = UInt((w/8).W)
-
-  override def cloneType = new DataKeepType(w).asInstanceOf[this.type]
 }
 
 /**
@@ -96,7 +94,7 @@ class NetworkPacketBuffer[T <: Data](
   val buffer = Module(new BufferBRAM(bufWords, new DataKeepType(wordBits)))
   val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
   val bufLengths = RegInit(VecInit(Seq.fill(nPackets) { 0.U(idxBits.W) }))
-  val bufValid = Vec(bufLengths.map(len => len > 0.U))
+  val bufValid = VecInit(bufLengths.map(len => len > 0.U))
 
   val bufHead = RegInit(0.U(idxBits.W))
   val bufTail = RegInit(0.U(idxBits.W))
@@ -115,11 +113,11 @@ class NetworkPacketBuffer[T <: Data](
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
 
-  val outLast = Vec(bufLengths.map(len => outIdx === (len - 1.U)))
+  val outLast = VecInit(bufLengths.map(len => outIdx === (len - 1.U)))
   val outValidReg = RegInit(false.B)
 
   val ren = (io.stream.out.ready || !outValidReg) && bufValid(outPhase) && !bufEmpty
-  val wen = Wire(init = false.B)
+  val wen = WireInit(false.B)
   val hwen = wen && inIdx < headerWords.U
 
   val outLastReg = RegEnable(outLast(outPhase), ren)
@@ -131,7 +129,7 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.bits.keep := buffer.io.read.data.keep
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
-  io.header.bits := headerType.fromBits(Cat(headers(outPhase).reverse))
+  io.header.bits := Cat(headers(outPhase).reverse).asTypeOf(headerType)
   io.length := RegEnable(bufLengths(outPhase), ren) - outIdxReg
   io.count := RegEnable(PopCount(bufValid), ren)
 
@@ -299,15 +297,12 @@ class NetworkPacketBufferTest(netIfWidthBits: Int = 64) extends UnitTest(100000)
  * @param nXacts number of transactions
  * @param nWords number of words
  */
-class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
+class ReservationBufferAlloc(val nXacts: Int, val nWords: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
 
   val id = UInt(xactIdBits.W)
   val count = UInt(countBits.W)
-
-  override def cloneType =
-    new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
 /**
@@ -316,14 +311,11 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
  * @param nXacts number of transactions
  * @param netIfWidthBits flit size of network
  */
-class ReservationBufferData(nXacts: Int, netIfWidthBits: Int = 64) extends Bundle {
+class ReservationBufferData(val nXacts: Int, val netIfWidthBits: Int = 64) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
 
   val id = UInt(xactIdBits.W)
   val data = new StreamChannel(netIfWidthBits)
-
-  override def cloneType =
-    new ReservationBufferData(nXacts, netIfWidthBits).asInstanceOf[this.type]
 }
 
 /**
