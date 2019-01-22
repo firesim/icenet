@@ -6,10 +6,10 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.{StreamIO, ValidStreamIO, StreamChannel}
 import IceNetConsts._
 
-class CreditTracker(inCredits: Int) extends Module {
+class CreditTracker(inCredits: Int, netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
-    val ext = new ValidStreamIO(NET_IF_WIDTH)
-    val int = Flipped(new StreamIO(NET_IF_WIDTH))
+    val ext = new ValidStreamIO(netConfig.NET_IF_WIDTH_BITS)
+    val int = Flipped(new StreamIO(netConfig.NET_IF_WIDTH_BITS))
     val in_free = Input(Bool())
   })
 
@@ -46,6 +46,7 @@ class CreditTracker(inCredits: Int) extends Module {
   io.ext.out.valid := send_credit_mess || io.int.out.fire()
   io.ext.out.bits.data := Mux(send_credit_mess,
     Cat(in_space_pending, true.B), io.int.out.bits.data)
+  io.ext.out.bits.keep := DontCare
   io.ext.out.bits.last := send_credit_mess || io.int.out.bits.last
 
   assert(!io.int.in.valid || io.int.in.ready,
@@ -67,16 +68,19 @@ class DelayQueue[T <: Data](typ: T, stages: Int) extends Module {
   io.deq <> queues.last.io.deq
 }
 
-class CreditTrackerTest extends UnitTest {
+class CreditTrackerTest(netIfWidth: Int = 64) extends UnitTest {
+
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = netIfWidth)
+
   val s_idle :: s_send :: s_wait :: s_done :: Nil = Enum(4)
   val state = RegInit(s_idle)
 
   // Make sure leading numbers are all even
-  val testData = Vec(Seq(0, 5, 7, 28, 11, 34).map(_.U(NET_IF_WIDTH.W)))
+  val testData = Vec(Seq(0, 5, 7, 28, 11, 34).map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
   val testLast = Vec(Seq(false, false, true, false, true, true).map(_.B))
 
-  val tracker = Module(new CreditTracker(1))
-  val queue = Module(new DelayQueue(new StreamChannel(NET_IF_WIDTH), 5))
+  val tracker = Module(new CreditTracker(1, netConfig))
+  val queue = Module(new DelayQueue(new StreamChannel(netConfig.NET_IF_WIDTH_BITS), 5))
 
   val (outIdx, outDone) = Counter(tracker.io.int.out.fire(), testData.size)
   val (inIdx, inDone) = Counter(queue.io.deq.fire(), testData.size)
@@ -85,6 +89,7 @@ class CreditTrackerTest extends UnitTest {
   tracker.io.in_free := queue.io.deq.fire() && queue.io.deq.bits.last
   tracker.io.int.out.valid := state === s_send
   tracker.io.int.out.bits.data := testData(outIdx)
+  tracker.io.int.out.bits.keep := DontCare
   tracker.io.int.out.bits.last := testLast(outIdx)
   queue.io.enq <> tracker.io.int.in
   queue.io.deq.ready := true.B

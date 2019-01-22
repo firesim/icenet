@@ -6,16 +6,24 @@ import scala.math.max
 import testchipip.StreamChannel
 import IceNetConsts._
 
-class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
+/** Helper class to create packets from input data, keep, and packet lengths
+ *
+ * @param lengths lengths of each packet to generate from the data
+ * @param genData data to put into packets
+ * @param genKeep keep associated with the data
+ * @param netConfig passin configuration settings
+ */ 
+class PacketGen(lengths: Seq[Int], genData: Seq[BigInt], genKeep: Seq[BigInt], netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
-    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val out = Decoupled(new StreamChannel(netConfig.NET_IF_WIDTH_BITS))
   })
 
   val maxLength = lengths.reduce(max(_, _))
   val totalLength = lengths.reduce(_ + _)
   val lengthVec = Vec(lengths.map(_.U))
-  val dataVec = Vec(genData.map(_.U(NET_IF_WIDTH.W)))
+  val dataVec = Vec(genData.map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
+  val keepVec = VecInit(genKeep.map(_.U(netConfig.NET_IF_WIDTH_BYTES.W)))
 
   require(totalLength == genData.size)
 
@@ -45,21 +53,30 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
 
   io.out.valid := sending
   io.out.bits.data := dataVec(dataIdx)
-  io.out.bits.keep := NET_FULL_KEEP
+  io.out.bits.keep := keepVec(dataIdx)
   io.out.bits.last := pktOffset === lengthVec(pktIdx) - 1.U
 }
 
+/**
+ * Helper class to check the data input
+ *
+ * @param checkData the required data to check
+ * @param checkKeep the keep bytemask associated with the data
+ * @param checkLast the last indicator for the bytes sent
+ * @param netConfig passin configuration settings
+ */ 
 class PacketCheck(
     checkData: Seq[BigInt],
-    checkKeep: Seq[Int],
-    checkLast: Seq[Boolean]) extends Module {
+    checkKeep: Seq[BigInt],
+    checkLast: Seq[Boolean],
+    netConfig: IceNetConfig) extends Module {
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val in = Flipped(Decoupled(new StreamChannel(netConfig.NET_IF_WIDTH_BITS)))
     val finished = Output(Bool())
   })
 
-  val checkDataVec = Vec(checkData.map(_.U(NET_IF_WIDTH.W)))
-  val checkKeepVec = Vec(checkKeep.map(_.U(NET_IF_BYTES.W)))
+  val checkDataVec = Vec(checkData.map(_.U(netConfig.NET_IF_WIDTH_BITS.W)))
+  val checkKeepVec = Vec(checkKeep.map(_.U(netConfig.NET_IF_WIDTH_BYTES.W)))
   val checkLastVec = Vec(checkLast.map(_.B))
 
   val (checkIdx, checkDone) = Counter(io.in.fire(), checkDataVec.length)
@@ -72,14 +89,14 @@ class PacketCheck(
   when (checkDone) { finished := true.B }
 
   def compareData(a: UInt, b: UInt, keep: UInt) = {
-    val bitmask = FillInterleaved(8, keep)
+    val bitmask = FillInterleaved(8, keep) // expand bitmask to bytemask
     (a & bitmask) === (b & bitmask)
   }
 
+  // everything should match (data, keep, and last bits)
   assert(!io.in.valid ||
     (compareData(io.in.bits.data, checkDataVec(checkIdx), io.in.bits.keep) &&
       io.in.bits.keep === checkKeepVec(checkIdx) &&
       io.in.bits.last === checkLastVec(checkIdx)),
     "PacketCheck: input does not match")
-
 }

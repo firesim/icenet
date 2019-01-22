@@ -7,6 +7,12 @@ import scala.util.Random
 import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
+/**
+ * Buffer that holds items using the Mem construct
+ *
+ * @param n size of buffer
+ * @param typ type of data to store
+ */
 class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   val addrBits = log2Ceil(n)
   val io = IO(new Bundle {
@@ -37,17 +43,39 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   io.read.data := Mux(rbypass, rbypass_data, rread_data)
 }
 
+/**
+ * Class representing data and keep values associated with it.
+ *
+ * @param w width of the data
+ */
+class DataKeepType(val w: Int) extends Bundle {
+  val data = UInt(w.W)
+  val keep = UInt((w/8).W)
+
+  override def cloneType = new DataKeepType(w).asInstanceOf[this.type]
+}
+
+/**
+ * Creates a network packet buffer that is used to store the packets gotten from the network.
+ * This structure will drop a entire packet if there is not enough space to hold all of the packet.
+ *
+ * @param nPackets number of packets to send over the network
+ * @param maxBytes max size in bytes of the packet
+ * @param headerBytes size of the header in bytes
+ * @param headerType class of header to be used
+ * @param wordBytes size of a flit (split of the data to send)
+ */
 class NetworkPacketBuffer[T <: Data](
     nPackets: Int,
     bufBytesPerPacket: Int = ETH_MAX_BYTES,
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
     headerType: T = new EthernetHeader,
-    wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
+    wordBytes: Int) extends Module {
 
-  val bufWordsPerPacket = bufBytesPerPacket / wordBytes
-  val maxWords = maxBytes / wordBytes
-  val headerWords = headerBytes / wordBytes
+  val bufWordsPerPacket = if(wordBytes > bufBytesPerPacket) 1 else bufBytesPerPacket/wordBytes
+  val maxWords = if(wordBytes > maxBytes) 1 else maxBytes/wordBytes
+  val headerWords = if(wordBytes > headerBytes) 1 else headerBytes/wordBytes
   val wordBits = wordBytes * 8
   val bufWords = bufWordsPerPacket * nPackets
 
@@ -61,10 +89,11 @@ class NetworkPacketBuffer[T <: Data](
     val count = Output(UInt(log2Ceil(nPackets+1).W))
   })
 
-  assert(!io.stream.in.valid || io.stream.in.bits.keep.andR,
+  // TODO: AJG: Should this be andR or orR?. If valid = true then there should be a byte to keep...
+  assert(!io.stream.in.valid || io.stream.in.bits.keep.orR,
     "NetworkPacketBuffer does not handle missing data")
 
-  val buffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
+  val buffer = Module(new BufferBRAM(bufWords, new DataKeepType(wordBits)))
   val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
   val bufLengths = RegInit(VecInit(Seq.fill(nPackets) { 0.U(idxBits.W) }))
   val bufValid = Vec(bufLengths.map(len => len > 0.U))
@@ -97,9 +126,9 @@ class NetworkPacketBuffer[T <: Data](
   val outIdxReg = RegEnable(outIdx, ren)
 
   io.stream.out.valid := outValidReg
-  io.stream.out.bits.data := buffer.io.read.data
+  io.stream.out.bits.data := buffer.io.read.data.data
   io.stream.out.bits.last := outLastReg
-  io.stream.out.bits.keep := DontCare
+  io.stream.out.bits.keep := buffer.io.read.data.keep
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := headerType.fromBits(Cat(headers(outPhase).reverse))
@@ -112,7 +141,7 @@ class NetworkPacketBuffer[T <: Data](
   buffer.io.read.addr := bufTail
   buffer.io.write.en := wen
   buffer.io.write.addr := bufHead
-  buffer.io.write.data := io.stream.in.bits.data
+  buffer.io.write.data := Cat(io.stream.in.bits.data, io.stream.in.bits.keep).asTypeOf(new DataKeepType(wordBits))
 
   val startDropping =
     (inPhase === outPhase && bufValid(inPhase)) ||
@@ -166,7 +195,12 @@ class NetworkPacketBuffer[T <: Data](
   }
 }
 
-class NetworkPacketBufferTest extends UnitTest(100000) {
+/**
+ * Unit test for the NetworkPacketBuffer class
+ *
+ * @param netIfWidthBits flit size of the network
+ */
+class NetworkPacketBufferTest(netIfWidthBits: Int = 64) extends UnitTest(100000) {
   val buffer = Module(new NetworkPacketBuffer(2, 24, 32, 8, UInt(64.W), 4))
 
   val inPackets = Seq(
@@ -259,6 +293,12 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
   io.finished := state === s_done
 }
 
+/**
+ * [TODO: ReservationBufferAlloc Description]
+ *
+ * @param nXacts number of transactions
+ * @param nWords number of words
+ */
 class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
@@ -270,17 +310,32 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
     new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
-class ReservationBufferData(nXacts: Int) extends Bundle {
+/**
+ * [TODO: ReservationBufferData Description]
+ *
+ * @param nXacts number of transactions
+ * @param netIfWidthBits flit size of network
+ */
+class ReservationBufferData(nXacts: Int, netIfWidthBits: Int = 64) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
 
   val id = UInt(xactIdBits.W)
-  val data = new StreamChannel(NET_IF_WIDTH)
+  val data = new StreamChannel(netIfWidthBits)
 
   override def cloneType =
-    new ReservationBufferData(nXacts).asInstanceOf[this.type]
+    new ReservationBufferData(nXacts, netIfWidthBits).asInstanceOf[this.type]
 }
 
-class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
+/**
+ * This functional block is used between the reader and the aligner blocks. It is used to make sure that all
+ * reads for the packet from the CPU memory are completed and ordered properly (since reads can complete out of order)
+ * so that the aligner can recieve a packet in proper order.
+ *
+ * @param nXacts number of transactions
+ * @param nWords number of words
+ * @param netIfWidthBits flit size of network
+ */
+class ReservationBuffer(nXacts: Int, nWords: Int, netIfWidthBits: Int = 64) extends Module {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
 
@@ -288,8 +343,8 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
 
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(new ReservationBufferAlloc(nXacts, nWords)))
-    val in = Flipped(Decoupled(new ReservationBufferData(nXacts)))
-    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val in = Flipped(Decoupled(new ReservationBufferData(nXacts, netIfWidthBits)))
+    val out = Decoupled(new StreamChannel(netIfWidthBits))
   })
 
   def incWrap(cur: UInt, inc: UInt): UInt = {
@@ -297,7 +352,7 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
     Mux(unwrapped >= nWords.U, unwrapped - nWords.U, unwrapped)
   }
 
-  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(NET_IF_WIDTH)))
+  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(netIfWidthBits)))
   val bufValid = RegInit(0.U(nWords.W))
 
   val head = RegInit(0.U(countBits.W))

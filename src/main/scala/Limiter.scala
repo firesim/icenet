@@ -6,10 +6,15 @@ import freechips.rocketchip.unittest.UnitTest
 import testchipip.SerialIO
 import IceNetConsts._
 
-class RateLimiterSettings extends Bundle {
-  val incBits = log2Ceil(RLIMIT_MAX_INC)
-  val periodBits = log2Ceil(RLIMIT_MAX_PERIOD)
-  val sizeBits = log2Ceil(RLIMIT_MAX_SIZE)
+/**
+ * This specifies the particular settings to limit the bandwidth of the NIC.
+ * Note: Since this is parameterized, you have to set the fields correctly in software
+ *       (Cannot be a static assignment with a MMIO reg)
+ */ 
+class RateLimiterSettings(netConfig: IceNetConfig) extends Bundle {
+  val    incBits = log2Ceil(netConfig.RLIMIT_MAX_INC)
+  val periodBits = log2Ceil(netConfig.RLIMIT_MAX_PERIOD)
+  val   sizeBits = log2Ceil(netConfig.RLIMIT_MAX_SIZE)
 
   /*
    * Given a clock frequency of X, you can achieve an output bandwidth
@@ -20,17 +25,26 @@ class RateLimiterSettings extends Bundle {
   val inc = UInt(incBits.W)
   val period = UInt(periodBits.W)
   val size = UInt(sizeBits.W)
+
+  override def cloneType = (new RateLimiterSettings(netConfig)).asInstanceOf[this.type]
 }
 
-class RateLimiter[T <: Data](typ: T) extends Module {
-  val incBits = log2Ceil(RLIMIT_MAX_INC)
-  val periodBits = log2Ceil(RLIMIT_MAX_PERIOD)
-  val sizeBits = log2Ceil(RLIMIT_MAX_SIZE)
+/**
+ * Functional block that throttles the bandwidth of the NIC. Uses a counter that is decremented
+ * everytime a flit is sent. This counter is incremented by k every p cycles providing a bandwidth
+ * of k/p * normal rate.
+ *
+ * @param typ type of data to be limited
+ */
+class RateLimiter[T <: Data](typ: T, netConfig: IceNetConfig) extends Module {
+  val    incBits = log2Ceil(netConfig.RLIMIT_MAX_INC)
+  val periodBits = log2Ceil(netConfig.RLIMIT_MAX_PERIOD)
+  val   sizeBits = log2Ceil(netConfig.RLIMIT_MAX_SIZE)
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(typ))
     val out = Decoupled(typ)
-    val settings = Input(new RateLimiterSettings)
+    val settings = Input(new RateLimiterSettings(netConfig))
   })
 
   val tokens = RegInit(0.U(sizeBits.W))
@@ -62,10 +76,17 @@ class RateLimiter[T <: Data](typ: T) extends Module {
   }
 }
 
+/**
+ * Companion object to RateLimiter class
+ */
 object RateLimiter {
-  def apply[T <: Data](in: DecoupledIO[T], inc: Int, period: Int, size: Int) = {
+  def apply[T <: Data](in: DecoupledIO[T],
+                       inc: Int,
+                       period: Int,
+                       size: Int,
+                       netConfig: IceNetConfig) = {
     if (period > 1) {
-      val limiter = Module(new RateLimiter(in.bits.cloneType))
+      val limiter = Module(new RateLimiter(in.bits.cloneType, netConfig))
       limiter.io.in <> in
       limiter.io.settings.inc := inc.U
       limiter.io.settings.period := (period - 1).U
@@ -75,13 +96,21 @@ object RateLimiter {
   }
 }
 
-class RateLimiterTest extends UnitTest {
+/**
+ * Unit test for RateLimiter class
+ *
+ * @param netIfWidthBits flit size of network
+ */
+class RateLimiterTest(netIfWidthBits: Int = 64) extends UnitTest {
+
+  val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = netIfWidthBits)
+
   val nFlits = 48
   val started = RegInit(false.B)
   val sending = RegInit(false.B)
   val receiving = RegInit(false.B)
 
-  val limiter = Module(new RateLimiter(Bool()))
+  val limiter = Module(new RateLimiter(Bool(), netConfig))
   limiter.io.in.valid := sending
   limiter.io.in.bits := true.B
   limiter.io.out.ready := receiving
