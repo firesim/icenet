@@ -698,19 +698,20 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
  *
  * @param netConfig passin network parameters
  */
-class NICIOvonly(val netConfig: IceNetConfig) extends Bundle {
-  val in = Flipped(Valid(new StreamChannel(netConfig.NET_IF_WIDTH_BITS)))
-  val out = Valid(new StreamChannel(netConfig.NET_IF_WIDTH_BITS))
+class NICIOvonly(val netIfWidthBits: Int) extends Bundle {
+  val in = Flipped(Valid(new StreamChannel(netIfWidthBits)))
+  val out = Valid(new StreamChannel(netIfWidthBits))
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
-  val rlimit = Input(new RateLimiterSettings(netConfig))
+  val rlimit = Input(new RateLimiterSettings(
+    new IceNetConfig(NET_IF_WIDTH_BITS = netIfWidthBits)))
 }
 
 /**
  * Companion object to NICIOvonly
  */
 object NICIOvonly {
-  def apply(nicio: NICIO, netConfig: IceNetConfig): NICIOvonly = {
-    val vonly = Wire(new NICIOvonly(netConfig))
+  def apply(nicio: NICIO, netIfWidthBits: Int): NICIOvonly = {
+    val vonly = Wire(new NICIOvonly(netIfWidthBits))
     vonly.out.valid := nicio.out.valid
     vonly.out.bits  := nicio.out.bits
     nicio.out.ready := true.B
@@ -730,9 +731,9 @@ trait HasPeripheryIceNICModuleImpValidOnly extends LazyModuleImp {
   implicit val p: Parameters
   val outer: HasPeripheryIceNIC
   val netConfig = new IceNetConfig(NET_IF_WIDTH_BITS = p(NICKey).NET_IF_WIDTH_BITS)
-  val net = IO(new NICIOvonly(netConfig))
+  val net = IO(new NICIOvonly(p(NICKey).NET_IF_WIDTH_BITS))
 
-  net <> NICIOvonly(outer.icenic.module.io.ext, netConfig)
+  net <> NICIOvonly(outer.icenic.module.io.ext, p(NICKey).NET_IF_WIDTH_BITS)
 }
 
 class IceNicTestSendDriver(
