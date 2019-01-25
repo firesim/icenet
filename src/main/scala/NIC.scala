@@ -459,15 +459,6 @@ class IceNicWriterModule(outer: IceNicWriter)
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := (idx << byteAddrBits.U) - subBytesRecvEnd - subBytesRecvStart
 
-  // DEBUG: AJG:
-  //when (io.recv.comp.valid){
-  //  printf("io.recv.comp.bits(%d) = (%d) - subEnd(%d) - subStart(%d)\n",
-  //         (idx << byteAddrBits.U) - subBytesRecvEnd - subBytesRecvStart,
-  //         (idx << byteAddrBits.U),
-  //         subBytesRecvEnd,
-  //         subBytesRecvStart)
-  //}
-
   when (io.recv.req.fire()) {
     idx := 0.U
     baseAddr := io.recv.req.bits >> byteAddrBits.U
@@ -475,12 +466,6 @@ class IceNicWriterModule(outer: IceNicWriter)
     beatsLeft := 0.U
     waitForStart := true.B
     state := s_data
-
-    // DEBUG: AJG:
-    //printf("baseAddr(%x) addrOffset(%x) io.recv.req.bits(%x)\n",
-    //       io.recv.req.bits >> byteAddrBits.U,
-    //       io.recv.req.bits & maskOffset,
-    //       io.recv.req.bits)
   }
 
   when (tl.a.fire()) {
@@ -497,26 +482,12 @@ class IceNicWriterModule(outer: IceNicWriter)
     when (waitForStart) {
       waitForStart := false.B
       subBytesRecvStart := PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
-
-      // DEBUG: AJG:
-      //printf("subBytesRecvStart(%d) = PopCount(NET_FULL_KEEP)(%d) - PopCount(streamShifter...out...keep)(%d)(%x)\n",
-      //       PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep),
-      //       PopCount(config.NET_FULL_KEEP),
-      //       PopCount(streamShifter.io.stream.out.bits.keep),
-      //       streamShifter.io.stream.out.bits.keep)
     }
 
     idx := idx + 1.U
     when (streamShifter.io.stream.out.bits.last) {
       subBytesRecvEnd := PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep)
       state := s_complete
-
-      // DEBUG: AJG:
-      //printf("subBytesRecvEnd(%d) = PopCount(NET_FULL_KEEP)(%d) - PopCount(streamShifter...out...keep)(%d)(%x)\n",
-      //       PopCount(config.NET_FULL_KEEP) - PopCount(streamShifter.io.stream.out.bits.keep),
-      //       PopCount(config.NET_FULL_KEEP),
-      //       PopCount(streamShifter.io.stream.out.bits.keep),
-      //       streamShifter.io.stream.out.bits.keep)
     }
   }
 
