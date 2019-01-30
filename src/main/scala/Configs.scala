@@ -37,7 +37,9 @@ class WithIceNetUnitTestsAll extends Config((site, here, up) => {
                    Module(new BasicSwitchTestWrapper(n)(p)),
                    Module(new BroadcastTestWrapper(n)(p)),
                    Module(new NetworkTapTest(n)),
-                   Module(new RateLimiterTest(n)) ) ) ++
+                   Module(new RateLimiterTest(n)) ) ++
+              Seq.tabulate(n/16)(m => m * 2).flatMap( // randomized testing for the new module that sweeps through all shift/size combos
+                   l => Seq( Module(new StreamShifterParameterizedTest(n, l)) ) ) ) ++
     Seq( Module(new AlignerTest),                // note: that these are not parameterized since you have to specify
          Module(new StreamShifterTest),          // exact data for tests
          Module(new StreamShifterZeroShiftTest),

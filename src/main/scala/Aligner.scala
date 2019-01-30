@@ -1,5 +1,6 @@
 package icenet
 
+import scala.util.Random
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
@@ -363,5 +364,159 @@ class StreamShifterZeroShiftTest extends UnitTest {
          (compareData( streamShifter.io.stream.out.bits.data, inData(outIdx), streamShifter.io.stream.out.bits.keep) &&
          streamShifter.io.stream.out.bits.keep === inKeep(outIdx) &&
          streamShifter.io.stream.out.bits.last === inLast(outIdx)),
+         "StreamShifterTest: output does not match expected")
+}
+
+/**
+ * Unit test for StreamShifter class
+ *
+ * Generates a random sequence of testWidth bits and creates an output set that is shifted by shiftByteAmt
+ */
+class StreamShifterParameterizedTest(testWidth: Int = 64, shiftByteAmt: Int = 4) extends UnitTest {
+
+  // create the packet length in flits
+  val packets = Seq( 3, 1, 1, 1, 1 ) // length of packets in flits
+  val packetFlitTotal = packets.foldLeft(0)(_ + _)
+
+  // create the input data set
+  val inDataVal = ( Seq.fill(packetFlitTotal){ BigInt(testWidth, new Random()) } )
+  var inKeepVar = Seq[BigInt]()
+  var inLastVar = Seq[Boolean]()
+  val rand = new Random()
+  for ( packetIdx <- 0 until packets.length ){
+    for ( lenInFlits <- 0 until packets(packetIdx) ){
+      if ( lenInFlits < packets(packetIdx) - 1 ){
+        inKeepVar = inKeepVar :+ ((BigInt(1) << ((testWidth/8))) - 1)
+        inLastVar = inLastVar :+ (false)
+      }
+      else {
+        inKeepVar = inKeepVar :+ ((BigInt(1) << (rand.nextInt((testWidth/8) - 1) + 1)) - 1)
+        inLastVar = inLastVar :+ (true)
+      }
+    }
+  }
+
+  // create the output data set
+  val shiftMaskAll = (BigInt(1) << (testWidth)) - 1
+  val shiftMaskLower = (BigInt(1) << (shiftByteAmt * 8)) - 1
+  val shiftMaskUpper = shiftMaskAll &~ shiftMaskLower
+  val shiftMaskAllKeep = (BigInt(1) << (testWidth/8)) - 1
+  val shiftMaskLowerKeep = (BigInt(1) << (shiftByteAmt)) - 1
+  val shiftMaskUpperKeep = shiftMaskAllKeep &~ shiftMaskLowerKeep
+  var prevLower = BigInt(0)
+  var prevLowerKeep = BigInt(0)
+  var outDataVar = Seq[BigInt]()
+  var outKeepVar = Seq[BigInt]()
+  var outLastVar = Seq[Boolean]()
+  for ( inSeqIdx <- 0 until packetFlitTotal ) {
+    val inDataShifted = (inDataVal(inSeqIdx)) << (shiftByteAmt * 8)
+    val inKeepShifted = (inKeepVar(inSeqIdx)) << shiftByteAmt
+
+    outDataVar = outDataVar :+ ((inDataShifted & shiftMaskUpper) | prevLower)
+    outKeepVar = outKeepVar :+ ((inKeepShifted & shiftMaskUpperKeep) | prevLowerKeep)
+
+    prevLower = (inDataShifted >> testWidth) & shiftMaskLower
+    prevLowerKeep = (inKeepShifted >> (testWidth/8)) & shiftMaskLowerKeep
+
+    val overflow = (inKeepShifted >> (testWidth / 8)) != 0
+    if (inLastVar(inSeqIdx)){
+      if (overflow){
+        outLastVar = outLastVar :+ (false)
+
+        outDataVar = outDataVar :+ (prevLower)
+        outKeepVar = outKeepVar :+ (prevLowerKeep)
+        outLastVar = outLastVar :+ (true)
+      }
+      else {
+        outLastVar = outLastVar :+ (true)
+      }
+
+      prevLower = BigInt(0)
+      prevLowerKeep = BigInt(0)
+    }
+    else {
+      outLastVar = outLastVar :+ (false)
+    }
+  }
+
+  // convert from scala seq into chisel vec
+  val inData = VecInit(inDataVal.map(v => if (v < 0) (v.S).asUInt else v.U))
+  val inKeep = VecInit(inKeepVar.map(v => if (v < 0) (v.S).asUInt else v.U))
+  val inLast = VecInit(inLastVar.map(_.B))
+
+  val outData = VecInit(outDataVar.map(v => if (v < 0) (v.S).asUInt else v.U))
+  val outKeep = VecInit(outKeepVar.map(v => if (v < 0) (v.S).asUInt else v.U))
+  val outLast = VecInit(outLastVar.map(_.B))
+
+  //printf(p"INPUT DATA:\n")
+  //printf(p"inData:    ")
+  //for ( i <- 0 until inData.length ){
+  //  printf("%x, ", inData(i))
+  //}
+  //printf(p"\n");
+  //printf(p"inKeep:    ")
+  //for ( i <- 0 until inKeep.length ){
+  //  printf("%x, ", inKeep(i))
+  //}
+  //printf(p"\n");
+  //printf(p"inLast:    ")
+  //for ( i <- 0 until inLast.length ){
+  //  printf("%x, ", inLast(i))
+  //}
+  //printf(p"\n");
+  //printf("OUTPUT DATA: SHFT_AMT: %d\n", shiftByteAmt.U)
+  //printf(p"outData:    ")
+  //for ( i <- 0 until outData.length ){
+  //  printf("%x, ", outData(i))
+  //}
+  //printf(p"\n");
+  //printf(p"outKeep:    ")
+  //for ( i <- 0 until outKeep.length ){
+  //  printf("%x, ", outKeep(i))
+  //}
+  //printf(p"\n");
+  //printf(p"outLast:    ")
+  //for ( i <- 0 until outLast.length ){
+  //  printf("%x, ", outLast(i))
+  //}
+  //printf(p"\n");
+
+  // normal test code
+  val started = RegInit(false.B)
+  val sending = RegInit(false.B)
+  val receiving = RegInit(false.B)
+
+  val streamShifter = Module(new StreamShifter(new IceNetConfig(NET_IF_WIDTH_BITS = testWidth)))
+
+  val (inIdx, inDone) = Counter(streamShifter.io.stream.in.fire(), inData.size)
+  val (outIdx, outDone) = Counter(streamShifter.io.stream.out.fire(), outData.size)
+
+  streamShifter.io.stream.in.valid := sending
+  streamShifter.io.stream.in.bits.data := inData(inIdx)
+  streamShifter.io.stream.in.bits.keep := inKeep(inIdx)
+  streamShifter.io.stream.in.bits.last := inLast(inIdx)
+  streamShifter.io.stream.out.ready := receiving
+  streamShifter.io.addrOffsetBytes := shiftByteAmt.U // pass in shift amount
+
+  when (io.start && !started) {
+    started := true.B
+    sending := true.B
+    receiving := true.B
+  }
+  // when (started && !outDone) { receiving := !receiving } // Test when the output is not ready immediately
+  when (inDone) { sending := false.B }
+  when (outDone) { receiving := false.B }
+
+  io.finished := started && !sending && !receiving
+
+  def compareData(a: UInt, b: UInt, keep: UInt) = {
+    val bitmask = FillInterleaved(8, keep)
+    (a & bitmask) === (b & bitmask)
+  }
+
+  assert(!streamShifter.io.stream.out.fire() ||
+         (compareData( streamShifter.io.stream.out.bits.data, outData(outIdx), streamShifter.io.stream.out.bits.keep) &&
+         streamShifter.io.stream.out.bits.keep === outKeep(outIdx) &&
+         streamShifter.io.stream.out.bits.last === outLast(outIdx)),
          "StreamShifterTest: output does not match expected")
 }
