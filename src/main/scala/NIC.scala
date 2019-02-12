@@ -130,9 +130,9 @@ class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
 
 class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     extends NICLazyModule {
-  val reader = LazyModule(new IceNicReader)
-  val node = TLIdentityNode()
-  node := reader.node
+  val reader = LazyModule(new StreamReader(
+    nMemXacts, outBufFlits, maxAcquireBytes))
+  val node = reader.node
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
@@ -143,167 +143,26 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
       val rlimit = Input(new RateLimiterSettings)
     })
 
-    reader.module.io.send <> io.send
-
-    val queue = Module(new ReservationBuffer(nMemXacts, outBufFlits))
-    queue.io.alloc <> reader.module.io.alloc
-    queue.io.in <> reader.module.io.out
-
-    val aligner = Module(new Aligner)
-    aligner.io.in <> queue.io.out
+    val readreq = reader.module.io.req
+    io.send.req.ready := readreq.ready
+    readreq.valid := io.send.req.valid
+    readreq.bits.address := io.send.req.bits(47, 0)
+    readreq.bits.length  := io.send.req.bits(62, 48)
+    readreq.bits.partial := io.send.req.bits(63)
+    io.send.comp <> reader.module.io.resp
 
     val unlimitedOut = if (nInputTaps > 0) {
       val arb = Module(new HellaPeekingArbiter(
         new StreamChannel(NET_IF_WIDTH), 1 + nInputTaps,
         (chan: StreamChannel) => chan.last, rr = true))
-      arb.io.in <> (aligner.io.out +: io.tap.get)
+      arb.io.in <> (reader.module.io.out +: io.tap.get)
       arb.io.out
-    } else { aligner.io.out }
+    } else { reader.module.io.out }
 
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
     limiter.io.in <> unlimitedOut
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
-  }
-}
-
-/*
- * Send frames out
- */
-class IceNicReader(implicit p: Parameters)
-    extends NICLazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "ice-nic-send", sourceId = IdRange(0, nMemXacts))
-  lazy val module = new IceNicReaderModule(this)
-}
-
-class IceNicReaderModule(outer: IceNicReader) extends LazyModuleImp(outer) {
-  val maxBytes = outer.maxAcquireBytes
-  val nXacts = outer.nMemXacts
-  val outFlits = outer.outBufFlits
-
-  val io = IO(new Bundle {
-    val send = Flipped(new IceNicSendIO)
-    val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
-    val out = Decoupled(new ReservationBufferData(nXacts))
-  })
-
-  val (tl, edge) = outer.node.out(0)
-  val beatBytes = tl.params.dataBits / 8
-  val byteAddrBits = log2Ceil(beatBytes)
-  val addrBits = tl.params.addressBits
-  val lenBits = NET_LEN_BITS - 1
-  val midPoint = NET_IF_WIDTH - NET_LEN_BITS
-  val packpart = io.send.req.bits(NET_IF_WIDTH - 1)
-  val packlen = io.send.req.bits(NET_IF_WIDTH - 2, midPoint)
-  val packaddr = io.send.req.bits(midPoint - 1, 0)
-
-  require(beatBytes == NET_IF_BYTES)
-
-  // we allow one TL request at a time to avoid tracking
-  val s_idle :: s_read :: s_comp :: Nil = Enum(3)
-  val state = RegInit(s_idle)
-
-  // Physical (word) address in memory
-  val sendaddr = Reg(UInt(addrBits.W))
-  // Number of words to send
-  val sendlen  = Reg(UInt(lenBits.W))
-  // 0 if last packet in sequence, 1 otherwise
-  val sendpart = Reg(Bool())
-
-  val xactBusy = RegInit(0.U(nXacts.W))
-  val xactOnehot = PriorityEncoderOH(~xactBusy)
-  val xactId = OHToUInt(xactOnehot)
-  val xactLast = Reg(UInt(nXacts.W))
-  val xactLeftKeep = Reg(Vec(nXacts, UInt(NET_IF_BYTES.W)))
-  val xactRightKeep = Reg(Vec(nXacts, UInt(NET_IF_BYTES.W)))
-
-  val reqSize = MuxCase(byteAddrBits.U,
-    (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
-        // Use the largest size (beatBytes <= size <= maxBytes)
-        // s.t. sendaddr % size == 0 and sendlen > size
-        (sendaddr(lgSize-1,0) === 0.U &&
-          (sendlen >> lgSize.U) =/= 0.U) -> lgSize.U))
-  val isLast = (xactLast >> tl.d.bits.source)(0) && edge.last(tl.d)
-  val canSend = state === s_read && !xactBusy.andR
-
-  val loffset = Reg(UInt(byteAddrBits.W))
-  val roffset = Reg(UInt(byteAddrBits.W))
-  val lkeep = NET_FULL_KEEP << loffset
-  val rkeep = NET_FULL_KEEP >> roffset
-  val first = Reg(Bool())
-
-  xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
-                  ~Mux(tl.d.fire() && edge.last(tl.d),
-                        UIntToOH(tl.d.bits.source), 0.U)
-
-  val helper = DecoupledHelper(tl.a.ready, io.alloc.ready)
-
-  io.send.req.ready := state === s_idle
-  io.alloc.valid := helper.fire(io.alloc.ready, canSend)
-  io.alloc.bits.id := xactId
-  io.alloc.bits.count := (1.U << (reqSize - byteAddrBits.U))
-  tl.a.valid := helper.fire(tl.a.ready, canSend)
-  tl.a.bits := edge.Get(
-    fromSource = xactId,
-    toAddress = sendaddr,
-    lgSize = reqSize)._2
-
-  val outLeftKeep = xactLeftKeep(tl.d.bits.source)
-  val outRightKeep = xactRightKeep(tl.d.bits.source)
-
-  io.out.valid := tl.d.valid
-  io.out.bits.id := tl.d.bits.source
-  io.out.bits.data.data := tl.d.bits.data
-  io.out.bits.data.keep := MuxCase(NET_FULL_KEEP, Seq(
-    (edge.first(tl.d) && edge.last(tl.d)) -> (outLeftKeep & outRightKeep),
-    edge.first(tl.d) -> outLeftKeep,
-    edge.last(tl.d)  -> outRightKeep))
-  io.out.bits.data.last := isLast
-  tl.d.ready := io.out.ready
-  io.send.comp.valid := state === s_comp
-  io.send.comp.bits := true.B
-
-  when (io.send.req.fire()) {
-    val lastaddr = packaddr + packlen
-    val startword = packaddr(midPoint-1, byteAddrBits)
-    val endword = lastaddr(midPoint-1, byteAddrBits) +
-                    Mux(lastaddr(byteAddrBits-1, 0) === 0.U, 0.U, 1.U)
-
-    loffset := packaddr(byteAddrBits-1, 0)
-    roffset := Cat(endword, 0.U(byteAddrBits.W)) - lastaddr
-    first := true.B
-
-    sendaddr := Cat(startword, 0.U(byteAddrBits.W))
-    sendlen  := Cat(endword - startword, 0.U(byteAddrBits.W))
-    sendpart := packpart
-    state := s_read
-
-    assert(packlen > 0.U, s"NIC packet length must be >0")
-  }
-
-  when (tl.a.fire()) {
-    val reqBytes = 1.U << reqSize
-    sendaddr := sendaddr + reqBytes
-    sendlen  := sendlen - reqBytes
-    when (sendlen === reqBytes) {
-      xactLast := (xactLast & ~xactOnehot) | Mux(sendpart, 0.U, xactOnehot)
-      xactRightKeep(xactId) := rkeep
-      state := s_comp
-    } .otherwise {
-      xactLast := xactLast & ~xactOnehot
-      xactRightKeep(xactId) := NET_FULL_KEEP
-    }
-    when (first) {
-      first := false.B
-      xactLeftKeep(xactId) := lkeep
-    } .otherwise {
-      xactLeftKeep(xactId) := NET_FULL_KEEP
-    }
-  }
-
-  when (io.send.comp.fire()) {
-    state := s_idle
   }
 }
 

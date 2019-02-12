@@ -275,17 +275,17 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
     new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
-class ReservationBufferData(nXacts: Int) extends Bundle {
+class ReservationBufferData(nXacts: Int, dataBits: Int) extends Bundle {
   private val xactIdBits = log2Ceil(nXacts)
 
   val id = UInt(xactIdBits.W)
-  val data = new StreamChannel(NET_IF_WIDTH)
+  val data = new StreamChannel(dataBits)
 
   override def cloneType =
-    new ReservationBufferData(nXacts).asInstanceOf[this.type]
+    new ReservationBufferData(nXacts, dataBits).asInstanceOf[this.type]
 }
 
-class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
+class ReservationBuffer(nXacts: Int, nWords: Int, dataBits: Int) extends Module {
   private val xactIdBits = log2Ceil(nXacts)
   private val countBits = log2Ceil(nWords + 1)
 
@@ -293,8 +293,8 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
 
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(new ReservationBufferAlloc(nXacts, nWords)))
-    val in = Flipped(Decoupled(new ReservationBufferData(nXacts)))
-    val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
+    val in = Flipped(Decoupled(new ReservationBufferData(nXacts, dataBits)))
+    val out = Decoupled(new StreamChannel(dataBits))
   })
 
   def incWrap(cur: UInt, inc: UInt): UInt = {
@@ -302,7 +302,7 @@ class ReservationBuffer(nXacts: Int, nWords: Int) extends Module {
     Mux(unwrapped >= nWords.U, unwrapped - nWords.U, unwrapped)
   }
 
-  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(NET_IF_WIDTH)))
+  val buffer = Module(new BufferBRAM(nWords, new StreamChannel(dataBits)))
   val bufValid = RegInit(0.U(nWords.W))
 
   val head = RegInit(0.U(countBits.W))
