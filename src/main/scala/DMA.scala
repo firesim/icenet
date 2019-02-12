@@ -1,0 +1,171 @@
+package icenet
+
+import chisel3._
+import chisel3.util._
+import freechips.rocketchip.config.Parameters
+import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp, IdRange}
+import freechips.rocketchip.util.DecoupledHelper
+import testchipip.{StreamChannel, TLHelper}
+
+class StreamReadRequest extends Bundle {
+  val address = UInt(48.W)
+  val length = UInt(15.W)
+  val partial = Bool()
+}
+
+class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
+    (implicit p: Parameters) extends LazyModule {
+
+  val core = LazyModule(new StreamReaderCore(nXacts, outFlits, maxBytes))
+  val node = core.node
+
+  lazy val module = new LazyModuleImp(this) {
+    val dataBits = core.module.dataBits
+
+    val io = IO(new Bundle {
+      val req = Flipped(Decoupled(new StreamReadRequest))
+      val resp = Decoupled(Bool())
+      val out = Decoupled(new StreamChannel(dataBits))
+    })
+
+    core.module.io.req <> io.req
+    io.resp <> core.module.io.resp
+
+    val buffer = Module(new ReservationBuffer(nXacts, outFlits, dataBits))
+    buffer.io.alloc <> core.module.io.alloc
+    buffer.io.in <> core.module.io.out
+
+    val aligner = Module(new Aligner(dataBits))
+    aligner.io.in <> buffer.io.out
+    io.out <> aligner.io.out
+  }
+}
+
+class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
+    (implicit p: Parameters) extends LazyModule {
+  val node = TLHelper.makeClientNode(
+    name = "stream-reader", sourceId = IdRange(0, nXacts))
+
+  lazy val module = new LazyModuleImp(this) {
+    val (tl, edge) = node.out(0)
+    val dataBits = tl.params.dataBits
+    val beatBytes = dataBits / 8
+    val byteAddrBits = log2Ceil(beatBytes)
+    val addrBits = tl.params.addressBits
+    val lenBits = 15
+
+    val io = IO(new Bundle {
+      val req = Flipped(Decoupled(new StreamReadRequest))
+      val resp = Decoupled(Bool())
+      val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
+      val out = Decoupled(new ReservationBufferData(nXacts, dataBits))
+    })
+
+    val s_idle :: s_read :: s_resp :: Nil = Enum(3)
+    val state = RegInit(s_idle)
+
+    // Physical (word) address in memory
+    val sendaddr = Reg(UInt(addrBits.W))
+    // Number of words to send
+    val sendlen  = Reg(UInt(lenBits.W))
+    // 0 if last packet in sequence, 1 otherwise
+    val sendpart = Reg(Bool())
+
+    val xactBusy = RegInit(0.U(nXacts.W))
+    val xactOnehot = PriorityEncoderOH(~xactBusy)
+    val xactId = OHToUInt(xactOnehot)
+    val xactLast = Reg(UInt(nXacts.W))
+    val xactLeftKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
+    val xactRightKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
+
+    val reqSize = MuxCase(byteAddrBits.U,
+      (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
+          // Use the largest size (beatBytes <= size <= maxBytes)
+          // s.t. sendaddr % size == 0 and sendlen > size
+          (sendaddr(lgSize-1,0) === 0.U &&
+            (sendlen >> lgSize.U) =/= 0.U) -> lgSize.U))
+    val isLast = (xactLast >> tl.d.bits.source)(0) && edge.last(tl.d)
+    val canSend = state === s_read && !xactBusy.andR
+
+    val fullKeep = ~0.U(beatBytes.W)
+    val loffset = Reg(UInt(byteAddrBits.W))
+    val roffset = Reg(UInt(byteAddrBits.W))
+    val lkeep = fullKeep << loffset
+    val rkeep = fullKeep >> roffset
+    val first = Reg(Bool())
+
+    xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
+                    ~Mux(tl.d.fire() && edge.last(tl.d),
+                          UIntToOH(tl.d.bits.source), 0.U)
+
+    val helper = DecoupledHelper(tl.a.ready, io.alloc.ready)
+
+    io.req.ready := state === s_idle
+    io.alloc.valid := helper.fire(io.alloc.ready, canSend)
+    io.alloc.bits.id := xactId
+    io.alloc.bits.count := (1.U << (reqSize - byteAddrBits.U))
+    tl.a.valid := helper.fire(tl.a.ready, canSend)
+    tl.a.bits := edge.Get(
+      fromSource = xactId,
+      toAddress = sendaddr,
+      lgSize = reqSize)._2
+
+    val outLeftKeep = xactLeftKeep(tl.d.bits.source)
+    val outRightKeep = xactRightKeep(tl.d.bits.source)
+
+    io.out.valid := tl.d.valid
+    io.out.bits.id := tl.d.bits.source
+    io.out.bits.data.data := tl.d.bits.data
+    io.out.bits.data.keep := MuxCase(fullKeep, Seq(
+      (edge.first(tl.d) && edge.last(tl.d)) -> (outLeftKeep & outRightKeep),
+      edge.first(tl.d) -> outLeftKeep,
+      edge.last(tl.d)  -> outRightKeep))
+    io.out.bits.data.last := isLast
+    tl.d.ready := io.out.ready
+    io.resp.valid := state === s_resp
+    io.resp.bits := true.B
+
+    when (io.req.fire()) {
+      val req = io.req.bits
+      val lastaddr = req.address + req.length
+      val startword = req.address(addrBits-1, byteAddrBits)
+      val endword = lastaddr(addrBits-1, byteAddrBits) +
+                      Mux(lastaddr(byteAddrBits-1, 0) === 0.U, 0.U, 1.U)
+
+      loffset := req.address(byteAddrBits-1, 0)
+      roffset := Cat(endword, 0.U(byteAddrBits.W)) - lastaddr
+      first := true.B
+
+      sendaddr := Cat(startword, 0.U(byteAddrBits.W))
+      sendlen  := Cat(endword - startword, 0.U(byteAddrBits.W))
+      sendpart := req.partial
+      state := s_read
+
+      assert(req.length > 0.U, s"request length must be >0")
+    }
+
+    when (tl.a.fire()) {
+      val reqBytes = 1.U << reqSize
+      sendaddr := sendaddr + reqBytes
+      sendlen  := sendlen - reqBytes
+      when (sendlen === reqBytes) {
+        xactLast := (xactLast & ~xactOnehot) | Mux(sendpart, 0.U, xactOnehot)
+        xactRightKeep(xactId) := rkeep
+        state := s_resp
+      } .otherwise {
+        xactLast := xactLast & ~xactOnehot
+        xactRightKeep(xactId) := fullKeep
+      }
+      when (first) {
+        first := false.B
+        xactLeftKeep(xactId) := lkeep
+      } .otherwise {
+        xactLeftKeep(xactId) := fullKeep
+      }
+    }
+
+    when (io.resp.fire()) {
+      state := s_idle
+    }
+  }
+}
