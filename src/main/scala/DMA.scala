@@ -169,3 +169,127 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     }
   }
 }
+
+class StreamWriteRequest extends Bundle {
+  val address = UInt(48.W)
+  val length = UInt(16.W)
+}
+
+class StreamWriter(nXacts: Int, maxBytes: Int)
+    (implicit p: Parameters) extends LazyModule {
+  val node = TLHelper.makeClientNode(
+    name = "stream-writer", sourceId = IdRange(0, nXacts))
+
+  lazy val module = new LazyModuleImp(this) {
+    val (tl, edge) = node.out(0)
+    val dataBits = tl.params.dataBits
+    val beatBytes = dataBits / 8
+    val byteAddrBits = log2Ceil(beatBytes)
+    val addrBits = tl.params.addressBits
+    val lenBits = 16
+
+    val io = IO(new Bundle {
+      val req = Flipped(Decoupled(new StreamWriteRequest))
+      val resp = Decoupled(UInt(lenBits.W))
+      val in = Flipped(Decoupled(new StreamChannel(dataBits)))
+    })
+
+    val s_idle :: s_data :: s_resp :: Nil = Enum(3)
+    val state = RegInit(s_idle)
+
+    val length = Reg(UInt(lenBits.W))
+    val baseAddr = Reg(UInt(addrBits.W))
+    val offset = Reg(UInt(addrBits.W))
+    val addrMerged = baseAddr + offset
+    val bytesToSend = length - offset
+    val baseByteOff = baseAddr(byteAddrBits-1, 0)
+    val byteOff = addrMerged(byteAddrBits-1, 0)
+
+    val xactBusy = RegInit(0.U(nXacts.W))
+    val xactOnehot = PriorityEncoderOH(~xactBusy)
+    val xactId = OHToUInt(xactOnehot)
+
+    val maxBeats = maxBytes / beatBytes
+    val beatIdBits = log2Ceil(maxBeats)
+
+    val beatsLeft = Reg(UInt(beatIdBits.W))
+    val headAddr = Reg(UInt(addrBits.W))
+    val headXact = Reg(UInt(log2Ceil(nXacts).W))
+    val headSize = Reg(UInt(log2Ceil(maxBytes + 1).W))
+
+    val newBlock = beatsLeft === 0.U
+    val canSend = !xactBusy.andR || !newBlock
+
+    val reqSize = MuxCase(log2Ceil(beatBytes).U,
+      (log2Ceil(maxBytes) until log2Ceil(beatBytes) by -1).map(lgSize =>
+          (addrMerged(lgSize-1,0) === 0.U &&
+            (bytesToSend >> lgSize.U) =/= 0.U) -> lgSize.U))
+
+    xactBusy := (xactBusy | Mux(tl.a.fire() && newBlock, xactOnehot, 0.U)) &
+                    ~Mux(tl.d.fire(), UIntToOH(tl.d.bits.source), 0.U)
+
+    val overhang = RegInit(0.U(dataBits.W))
+    val lastPartial = bytesToSend < beatBytes.U
+    val fulldata = (overhang | (io.in.bits.data << Cat(baseByteOff, 0.U(3.W))))
+
+    val fromSource = Mux(newBlock, xactId, headXact)
+    val toAddress = Mux(newBlock, addrMerged, headAddr)
+    val lgSize = Mux(newBlock, reqSize, headSize)
+    val wdata = fulldata(dataBits-1, 0)
+    val wmask = Cat((0 until beatBytes).map(
+      i => (i.U >= byteOff) && (i.U < bytesToSend)).reverse)
+    val wpartial = byteOff =/= 0.U || lastPartial
+
+    val putPartial = edge.Put(
+      fromSource = xactId,
+      toAddress = addrMerged,
+      lgSize = log2Ceil(beatBytes).U,
+      data = Mux(lastPartial, overhang, wdata),
+      mask = wmask)._2
+
+    val putFull = edge.Put(
+      fromSource = fromSource,
+      toAddress = toAddress,
+      lgSize = lgSize,
+      data = wdata)._2
+
+    io.req.ready := state === s_idle
+    tl.a.valid := (state === s_data) && (io.in.valid || lastPartial) && canSend
+    tl.a.bits := Mux(wpartial, putPartial, putFull)
+    tl.d.ready := xactBusy.orR
+    io.in.ready := state === s_data && canSend && !lastPartial && tl.a.ready
+    io.resp.valid := state === s_resp && !xactBusy.orR
+    io.resp.bits := length
+
+    when (io.req.fire()) {
+      offset := 0.U
+      baseAddr := io.req.bits.address
+      length := io.req.bits.length
+      beatsLeft := 0.U
+      state := s_data
+    }
+
+    when (tl.a.fire()) {
+      when (newBlock) {
+        val nBeats = 1.U << (reqSize - 3.U)
+        beatsLeft := nBeats - 1.U
+        headAddr := addrMerged
+        headXact := xactId
+        headSize := reqSize
+      } .otherwise {
+        beatsLeft := beatsLeft - 1.U
+      }
+
+      val bytesSent = MuxCase(beatBytes.U, Seq(
+        (byteOff =/= 0.U) -> (beatBytes.U - byteOff),
+        lastPartial -> bytesToSend))
+
+      offset := offset + bytesSent
+      overhang := fulldata >> dataBits.U
+
+      when (bytesSent === bytesToSend) { state := s_resp }
+    }
+
+    when (io.resp.fire()) { state := s_idle }
+  }
+}
