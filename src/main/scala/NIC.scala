@@ -167,95 +167,37 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
 }
 
 class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "ice-nic-recv", sourceId = IdRange(0, nMemXacts))
-  lazy val module = new IceNicWriterModule(this)
-}
+  val writer = LazyModule(new StreamWriter(nMemXacts, maxAcquireBytes))
+  val node = writer.node
 
-class IceNicWriterModule(outer: IceNicWriter)
-    extends LazyModuleImp(outer) {
-  val io = IO(new Bundle {
-    val recv = Flipped(new IceNicRecvIO)
-    val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
-    val length = Input(UInt(NET_LEN_BITS.W))
-  })
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle {
+      val recv = Flipped(new IceNicRecvIO)
+      val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
+      val length = Input(UInt(NET_LEN_BITS.W))
+    })
 
-  val maxBytes = outer.maxAcquireBytes
-  val (tl, edge) = outer.node.out(0)
-  val beatBytes = tl.params.dataBits / 8
-  val fullAddrBits = tl.params.addressBits
-  val byteAddrBits = log2Ceil(beatBytes)
-  val addrBits = fullAddrBits - byteAddrBits
+    val streaming = RegInit(false.B)
+    val byteAddrBits = log2Ceil(NET_IF_BYTES)
+    val helper = DecoupledHelper(
+      io.recv.req.valid,
+      writer.module.io.req.ready,
+      io.in.valid, !streaming)
 
-  require(beatBytes == NET_IF_BYTES)
+    writer.module.io.req.valid := helper.fire(writer.module.io.req.ready)
+    writer.module.io.req.bits.address := io.recv.req.bits
+    writer.module.io.req.bits.length := io.length << byteAddrBits.U
+    io.recv.req.ready := helper.fire(io.recv.req.valid)
 
-  val s_idle :: s_data :: s_complete :: Nil = Enum(3)
-  val state = RegInit(s_idle)
+    writer.module.io.in.valid := io.in.valid && streaming
+    writer.module.io.in.bits := io.in.bits
+    io.in.ready := writer.module.io.in.ready && streaming
 
-  val baseAddr = Reg(UInt(addrBits.W))
-  val idx = Reg(UInt(addrBits.W))
-  val addrMerged = baseAddr + idx
+    io.recv.comp <> writer.module.io.resp
 
-  val xactBusy = RegInit(0.U(outer.nMemXacts.W))
-  val xactOnehot = PriorityEncoderOH(~xactBusy)
-
-  val maxBeats = maxBytes / beatBytes
-  val beatIdBits = log2Ceil(maxBeats)
-
-  val beatsLeft = Reg(UInt(beatIdBits.W))
-  val headAddr = Reg(UInt(addrBits.W))
-  val headXact = Reg(UInt(log2Ceil(outer.nMemXacts).W))
-  val headSize = Reg(UInt(log2Ceil(beatIdBits + 1).W))
-
-  val newBlock = beatsLeft === 0.U
-  val canSend = !xactBusy.andR || !newBlock
-
-  val reqSize = MuxCase(0.U,
-    (log2Ceil(maxBytes / beatBytes) until 0 by -1).map(lgSize =>
-        (addrMerged(lgSize-1,0) === 0.U &&
-          (io.length >> lgSize.U) =/= 0.U) -> lgSize.U))
-
-  xactBusy := (xactBusy | Mux(tl.a.fire() && newBlock, xactOnehot, 0.U)) &
-                  ~Mux(tl.d.fire(), UIntToOH(tl.d.bits.source), 0.U)
-
-  val fromSource = Mux(newBlock, OHToUInt(xactOnehot), headXact)
-  val toAddress = Mux(newBlock, addrMerged, headAddr) << byteAddrBits.U
-  val lgSize = Mux(newBlock, reqSize, headSize) +& byteAddrBits.U
-
-  io.recv.req.ready := state === s_idle
-  tl.a.valid := (state === s_data && io.in.valid) && canSend
-  tl.a.bits := edge.Put(
-    fromSource = fromSource,
-    toAddress = toAddress,
-    lgSize = lgSize,
-    data = io.in.bits.data)._2
-  tl.d.ready := xactBusy.orR
-  io.in.ready := state === s_data && canSend && tl.a.ready
-  io.recv.comp.valid := state === s_complete && !xactBusy.orR
-  io.recv.comp.bits := idx << byteAddrBits.U
-
-  when (io.recv.req.fire()) {
-    idx := 0.U
-    baseAddr := io.recv.req.bits >> byteAddrBits.U
-    beatsLeft := 0.U
-    state := s_data
+    when (io.recv.req.fire()) { streaming := true.B }
+    when (io.in.fire() && io.in.bits.last) { streaming := false.B }
   }
-
-  when (tl.a.fire()) {
-    when (newBlock) {
-      val bytesToWrite = 1.U << reqSize
-      beatsLeft := bytesToWrite - 1.U
-      headAddr := addrMerged
-      headXact := OHToUInt(xactOnehot)
-      headSize := reqSize
-    } .otherwise {
-      beatsLeft := beatsLeft - 1.U
-    }
-    idx := idx + 1.U
-    when (io.in.bits.last) { state := s_complete }
-  }
-
-  when (io.recv.comp.fire()) { state := s_idle }
 }
 
 /*
