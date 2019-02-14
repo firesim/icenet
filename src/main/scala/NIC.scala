@@ -186,7 +186,7 @@ class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
 
     writer.module.io.req.valid := helper.fire(writer.module.io.req.ready)
     writer.module.io.req.bits.address := io.recv.req.bits
-    writer.module.io.req.bits.length := io.length << byteAddrBits.U
+    writer.module.io.req.bits.length := io.length
     io.recv.req.ready := helper.fire(io.recv.req.valid)
 
     writer.module.io.in.valid := io.in.valid && streaming
