@@ -204,6 +204,7 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
     val bytesToSend = length - offset
     val baseByteOff = baseAddr(byteAddrBits-1, 0)
     val byteOff = addrMerged(byteAddrBits-1, 0)
+    val extraBytes = Mux(baseByteOff === 0.U, 0.U, beatBytes.U - baseByteOff)
 
     val xactBusy = RegInit(0.U(nXacts.W))
     val xactOnehot = PriorityEncoderOH(~xactBusy)
@@ -220,8 +221,8 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
     val newBlock = beatsLeft === 0.U
     val canSend = !xactBusy.andR || !newBlock
 
-    val reqSize = MuxCase(log2Ceil(beatBytes).U,
-      (log2Ceil(maxBytes) until log2Ceil(beatBytes) by -1).map(lgSize =>
+    val reqSize = MuxCase(0.U,
+      (log2Ceil(maxBytes) until 0 by -1).map(lgSize =>
           (addrMerged(lgSize-1,0) === 0.U &&
             (bytesToSend >> lgSize.U) =/= 0.U) -> lgSize.U))
 
@@ -229,7 +230,7 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
                     ~Mux(tl.d.fire(), UIntToOH(tl.d.bits.source), 0.U)
 
     val overhang = RegInit(0.U(dataBits.W))
-    val lastPartial = bytesToSend < beatBytes.U
+    val sendTrail = bytesToSend <= extraBytes
     val fulldata = (overhang | (io.in.bits.data << Cat(baseByteOff, 0.U(3.W))))
 
     val fromSource = Mux(newBlock, xactId, headXact)
@@ -238,13 +239,13 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
     val wdata = fulldata(dataBits-1, 0)
     val wmask = Cat((0 until beatBytes).map(
       i => (i.U >= byteOff) && (i.U < bytesToSend)).reverse)
-    val wpartial = byteOff =/= 0.U || lastPartial
+    val wpartial = !wmask.andR
 
     val putPartial = edge.Put(
       fromSource = xactId,
-      toAddress = addrMerged,
+      toAddress = addrMerged & ~(beatBytes-1).U(addrBits.W),
       lgSize = log2Ceil(beatBytes).U,
-      data = Mux(lastPartial, overhang, wdata),
+      data = Mux(sendTrail, overhang, wdata),
       mask = wmask)._2
 
     val putFull = edge.Put(
@@ -254,10 +255,10 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
       data = wdata)._2
 
     io.req.ready := state === s_idle
-    tl.a.valid := (state === s_data) && (io.in.valid || lastPartial) && canSend
+    tl.a.valid := (state === s_data) && (io.in.valid || sendTrail) && canSend
     tl.a.bits := Mux(wpartial, putPartial, putFull)
     tl.d.ready := xactBusy.orR
-    io.in.ready := state === s_data && canSend && !lastPartial && tl.a.ready
+    io.in.ready := state === s_data && canSend && !sendTrail && tl.a.ready
     io.resp.valid := state === s_resp && !xactBusy.orR
     io.resp.bits := length
 
@@ -270,20 +271,17 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
     }
 
     when (tl.a.fire()) {
-      when (newBlock) {
-        val nBeats = 1.U << (reqSize - 3.U)
+      when (!newBlock) {
+        beatsLeft := beatsLeft - 1.U
+      } .elsewhen (reqSize > byteAddrBits.U) {
+        val nBeats = 1.U << (reqSize - byteAddrBits.U)
         beatsLeft := nBeats - 1.U
         headAddr := addrMerged
         headXact := xactId
         headSize := reqSize
-      } .otherwise {
-        beatsLeft := beatsLeft - 1.U
       }
 
-      val bytesSent = MuxCase(beatBytes.U, Seq(
-        (byteOff =/= 0.U) -> (beatBytes.U - byteOff),
-        lastPartial -> bytesToSend))
-
+      val bytesSent = PopCount(wmask)
       offset := offset + bytesSent
       overhang := fulldata >> dataBits.U
 
