@@ -15,7 +15,8 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
       Module(new AlignerTest),
       Module(new IceNicSendTestWrapper()(p)),
       Module(new IceNicRecvTestWrapper()(p)),
-      Module(new IceNicTestWrapper()(p)))
+      Module(new IceNicTestWrapper()(p)),
+      Module(new MisalignedTestWrapper()(p)))
   }
 })
 

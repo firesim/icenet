@@ -8,8 +8,8 @@ import freechips.rocketchip.devices.tilelink.TLROM
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.unittest.{UnitTest, UnitTestIO}
-import freechips.rocketchip.util.{LatencyPipe, TwoWayCounter}
-import testchipip.TLHelper
+import freechips.rocketchip.util.{LatencyPipe, TwoWayCounter, UIntIsOneOf}
+import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.math.max
 import IceNetConsts._
 
@@ -369,6 +369,137 @@ class IceNicTest(implicit p: Parameters) extends NICLazyModule {
 
 class IceNicTestWrapper(implicit p: Parameters) extends UnitTest(50000) {
   val test = Module(LazyModule(new IceNicTest).module)
+  test.io.start := io.start
+  io.finished := test.io.finished
+}
+
+class MisalignedTestDriver(implicit p: Parameters) extends Module {
+  val io = IO(new Bundle with UnitTestIO {
+    val net = new StreamIO(NET_IF_WIDTH)
+    val send = new IceNicSendIO
+    val recv = new IceNicRecvIO
+  })
+
+  val fullData = Seq(
+    "hDEADBEEF", "h01234567", "h555999ff", "h09341423",
+    "h1384AEDF", "hABCD1234", "h1093567A", "hBADD00D1",
+    "hA325B246", "h49230923", "h11113333", "hAEDC1445").map(_.U(32.W))
+
+  val outData1 = VecInit(
+    Cat(fullData(8),  fullData(7)),
+    Cat(fullData(10), fullData(9)),
+    Cat(0.U(32.W),    fullData(11)))
+  val outKeep1 = VecInit(Seq.fill(2)(~0.U(8.W)) :+ "h0f".U)
+
+  val outData2 = VecInit(
+    Cat(fullData(1), fullData(0)),
+    Cat(fullData(3), fullData(2)),
+    Cat(fullData(5), fullData(4)),
+    Cat(0.U(32.W),   fullData(6)))
+  val outKeep2 = VecInit(Seq.fill(3)(~0.U(8.W)) :+ "h0f".U)
+
+  val expData = VecInit(
+    Cat(fullData(6),  fullData(5)),
+    Cat(fullData(8),  fullData(7)),
+    Cat(fullData(10), fullData(9)))
+
+  val (s_start :: s_sendreq :: s_sendcomp :: s_recvreq :: s_recvcomp ::
+       s_outdata1 :: s_outdata2 :: s_indata :: s_done :: Nil) = Enum(9)
+  val state = RegInit(s_start)
+
+  val (recvReqIdx, recvReqDone) = Counter(io.recv.req.fire(), 2)
+  val (recvCompIdx, recvCompDone) = Counter(io.recv.comp.fire(), 2)
+
+  val (outIdx1, outDone1) = Counter(
+    state === s_outdata1 && io.net.out.ready, outData1.size)
+  val (outIdx2, outDone2) = Counter(
+    state === s_outdata2 && io.net.out.ready, outData2.size)
+  val (inIdx, inDone) = Counter(io.net.in.fire(), expData.size)
+
+  val outBits1 = Wire(new StreamChannel(NET_IF_WIDTH))
+  outBits1.data := outData1(outIdx1)
+  outBits1.keep := outKeep1(outIdx1)
+  outBits1.last := outIdx1 === (outData1.size - 1).U
+
+  val outBits2 = Wire(new StreamChannel(NET_IF_WIDTH))
+  outBits2.data := outData2(outIdx2)
+  outBits2.keep := outKeep2(outIdx2)
+  outBits2.last := outIdx2 === (outData2.size - 1).U
+
+  io.send.req.valid := state === s_sendreq
+  io.send.req.bits := Cat((expData.size * 8).U(16.W), 20.U(48.W))
+  io.send.comp.ready := state === s_sendcomp
+
+  io.recv.req.valid := state === s_recvreq
+  io.recv.req.bits  := Mux(recvReqIdx === 0.U, 28.U, 0.U)
+  io.recv.comp.ready := state === s_recvcomp
+
+  io.net.out.valid := state.isOneOf(s_outdata1, s_outdata2)
+  io.net.out.bits := Mux(state === s_outdata1, outBits1, outBits2)
+  io.net.in.ready := state === s_indata
+
+  io.finished := state === s_done
+
+  when (state === s_start && io.start) { state := s_recvreq }
+
+  when (recvReqDone) { state := s_outdata1 }
+
+  when (outDone1) { state := s_outdata2 }
+  when (outDone2) { state := s_recvcomp }
+
+  when (recvCompDone) { state := s_sendreq }
+
+  when (io.send.req.fire()) { state := s_indata }
+
+  when (inDone) { state := s_done }
+
+  assert(!io.net.in.valid || io.net.in.bits.data === expData(inIdx),
+    "MisalignedTest: input data does not match expected")
+  assert(!io.net.in.valid || io.net.in.bits.keep.andR,
+    "MisalignedTest: input keep does not match expected")
+  assert(!io.net.in.valid || io.net.in.bits.last === (inIdx === (expData.size-1).U),
+    "MisalignedTest: input last does not match expected")
+
+}
+
+class MisalignedTest(implicit p: Parameters) extends NICLazyModule {
+  val sendpath = LazyModule(new IceNicSendPath)
+  val recvpath = LazyModule(new IceNicRecvPath)
+
+  val xbar = LazyModule(new TLXbar)
+  val mem = LazyModule(new TLRAM(
+    AddressSet(0, 0x7ff), beatBytes = NET_IF_BYTES))
+
+  xbar.node := sendpath.node
+  xbar.node := recvpath.node
+  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
+              TLBuffer() := xbar.node
+
+  lazy val module = new LazyModuleImp(this) {
+    val io = IO(new Bundle with UnitTestIO)
+
+    val driver = Module(new MisalignedTestDriver)
+
+    driver.io.start := io.start
+    io.finished := driver.io.finished
+
+    driver.io.net.in <> sendpath.module.io.out
+    recvpath.module.io.in <> driver.io.net.out
+
+    sendpath.module.io.send.req <> Queue(driver.io.send.req, 1)
+    recvpath.module.io.recv.req <> Queue(driver.io.recv.req, 2)
+    driver.io.send.comp <> Queue(sendpath.module.io.send.comp, 1)
+    driver.io.recv.comp <> Queue(recvpath.module.io.recv.comp, 2)
+
+    val rlimit = sendpath.module.io.rlimit
+    rlimit.inc := 1.U
+    rlimit.period := 0.U
+    rlimit.size := 8.U
+  }
+}
+
+class MisalignedTestWrapper(implicit p: Parameters) extends UnitTest {
+  val test = Module(LazyModule(new MisalignedTest).module)
   test.io.start := io.start
   io.finished := test.io.finished
 }
