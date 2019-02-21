@@ -38,29 +38,27 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 }
 
 class NetworkPacketBuffer[T <: Data](
-    nPackets: Int,
-    bufBytesPerPacket: Int = ETH_MAX_BYTES,
+    bufWords: Int,
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
     headerType: T = new EthernetHeader,
     wordBytes: Int = NET_IF_WIDTH / 8,
     dropless: Boolean = false) extends Module {
 
-  val bufWordsPerPacket = bufBytesPerPacket / wordBytes
   val maxWords = maxBytes / wordBytes
   val headerWords = headerBytes / wordBytes
   val wordBits = wordBytes * 8
-  val bufWords = bufWordsPerPacket * nPackets
+  val nPackets = (bufWords - 1) / (headerWords + 1) + 1
 
   val idxBits = log2Ceil(bufWords)
-  val phaseBits = log2Ceil(nPackets)
+  val phaseBits = log2Ceil(nPackets + 1)
   val lenBits = log2Ceil(maxBytes + 1)
   val byteOffset = log2Ceil(wordBytes)
 
   val io = IO(new Bundle {
     val stream = new StreamIO(wordBytes * 8)
     val header = Valid(headerType)
-    val length = Output(UInt(lenBits.W))
+    val length = Valid(UInt(lenBits.W))
     val count = Output(UInt(log2Ceil(nPackets+1).W))
   })
 
@@ -73,10 +71,10 @@ class NetworkPacketBuffer[T <: Data](
       io.stream.in.bits.keep.andR),
     "NetworkPacketBuffer does not handle missing data")
 
-  val buffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
+  val dataBuffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
   val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
-  val bufLengths = RegInit(VecInit(Seq.fill(nPackets) { 0.U(lenBits.W) }))
-  val bufValid = VecInit(bufLengths.map(len => len > 0.U))
+
+  val lenBuffer = Module(new BufferBRAM(nPackets, UInt(lenBits.W)))
 
   val bufHead = RegInit(0.U(idxBits.W))
   val bufTail = RegInit(0.U(idxBits.W))
@@ -95,6 +93,11 @@ class NetworkPacketBuffer[T <: Data](
 
   val inPhase = RegInit(0.U(phaseBits.W))
   val outPhase = RegInit(0.U(phaseBits.W))
+  val pktCount = RegInit(0.U(phaseBits.W))
+  val nextLen = inLen + PopCount(io.stream.in.bits.keep)
+  val hasPackets = pktCount > 0.U
+
+  assert(pktCount <= nPackets.U, "Accepted more packets than possible")
 
   def bytesToWords(nbytes: UInt): UInt =
     nbytes(lenBits-1, byteOffset) + nbytes(byteOffset-1, 0).orR
@@ -105,51 +108,69 @@ class NetworkPacketBuffer[T <: Data](
     (1.U << finalBytes) - 1.U
   }
 
-  val bufNumWords = bufLengths.map(len => bytesToWords(len))
-  val outLast = VecInit(bufNumWords.map(nwords => outIdx === (nwords - 1.U)))
+  val length = lenBuffer.io.read.data
+  val numWords = bytesToWords(length)
+  // Need one cycle to read out packet length
+  val lengthKnown = RegInit(false.B)
+  val readLen = !lengthKnown && hasPackets
+
+  val outLast = outIdx === (numWords - 1.U)
   val outValidReg = RegInit(false.B)
 
-  val ren = (io.stream.out.ready || !outValidReg) && bufValid(outPhase) && !bufEmpty
+  val ren = (io.stream.out.ready || !outValidReg) && lengthKnown && !bufEmpty
   val wen = WireInit(false.B)
   val hwen = wen && inIdx < headerWords.U
 
-  val outLastReg = RegEnable(outLast(outPhase), ren)
+  val setLength = WireInit(false.B)
+  val clearLength = ren && outLast
+
+  pktCount := pktCount + setLength - clearLength
+
+  val outLastReg = RegEnable(outLast, ren)
   val outIdxReg = RegEnable(outIdx, ren)
-  val lengthReg = RegEnable(bufLengths(outPhase), ren)
 
   io.stream.out.valid := outValidReg
-  io.stream.out.bits.data := buffer.io.read.data
+  io.stream.out.bits.data := dataBuffer.io.read.data
   io.stream.out.bits.last := outLastReg
-  io.stream.out.bits.keep := Mux(outLastReg, finalKeep(lengthReg), ~0.U(wordBytes.W))
+  io.stream.out.bits.keep := Mux(outLastReg, finalKeep(length), ~0.U(wordBytes.W))
   io.stream.in.ready := true.B
-  io.header.valid := bufValid(outPhase)
+  io.header.valid := hasPackets
   io.header.bits := headers(outPhase).asTypeOf(headerType)
-  io.length := lengthReg
-  io.count := RegEnable(PopCount(bufValid), ren)
+  io.length.bits := lenBuffer.io.read.data
+  io.length.valid := lengthKnown
+  io.count := pktCount
 
   def wrapInc(x: UInt, n: Int) = Mux(x === (n - 1).U, 0.U, x + 1.U)
 
-  buffer.io.read.en := ren
-  buffer.io.read.addr := bufTail
-  buffer.io.write.en := wen
-  buffer.io.write.addr := bufHead
-  buffer.io.write.data := io.stream.in.bits.data
+  dataBuffer.io.read.en := ren
+  dataBuffer.io.read.addr := bufTail
+  dataBuffer.io.write.en := wen
+  dataBuffer.io.write.addr := bufHead
+  dataBuffer.io.write.data := io.stream.in.bits.data
+
+  lenBuffer.io.read.en := readLen
+  lenBuffer.io.read.addr := outPhase
+  lenBuffer.io.write.en := setLength
+  lenBuffer.io.write.addr := inPhase
+  lenBuffer.io.write.data := nextLen
 
   val startDropping =
-    (inPhase === outPhase && bufValid(inPhase)) ||
+    (inPhase === outPhase && hasPackets) ||
     (inIdx === maxWords.U) || bufFull
 
   when (io.stream.out.fire()) { outValidReg := false.B }
+
+  when (readLen) { lengthKnown := true.B }
 
   when (ren) {
     outValidReg := true.B
     bufTail := wrapInc(bufTail, bufWords)
     outIdx := outIdx + 1.U
 
-    when (outLast(outPhase)) {
+    when (outLast) {
       outIdx := 0.U
       outPhase := wrapInc(outPhase, nPackets)
-      bufLengths(outPhase) := 0.U
+      lengthKnown := false.B
     }
   }
 
@@ -165,15 +186,15 @@ class NetworkPacketBuffer[T <: Data](
     wen := !startDropping && !inDrop
     when (inIdx =/= (bufWords - 1).U) { inIdx := inIdx + 1.U }
 
-    val nextLen = inLen + PopCount(io.stream.in.bits.keep)
     inLen := nextLen
 
     when (io.stream.in.bits.last) {
       val nextPhase = wrapInc(inPhase, nPackets)
-      val tooSmall = inIdx < (headerWords - 1).U
+      // Drop packets if there aren't more than headerBytes amount of data
+      val tooSmall = inIdx < headerWords.U
       when (!startDropping && !inDrop && !tooSmall) {
+        setLength := true.B
         inPhase := nextPhase
-        bufLengths(inPhase) := nextLen
       } .otherwise {
         wen := false.B
         revertHead := inIdx =/= 0.U
@@ -196,7 +217,12 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest(100000) {
-  val buffer = Module(new NetworkPacketBuffer(2, 24, 32, 8, UInt(64.W), 4))
+  val buffer = Module(new NetworkPacketBuffer(
+    bufWords = 12,
+    maxBytes = 32,
+    headerBytes = 8,
+    headerType = UInt(64.W),
+    wordBytes = 4))
 
   val inPackets = Seq(
     (10, false), // drop because too long
@@ -208,8 +234,7 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
     (6,  false), // drop because buffer full
     (4,  true),
     (3,  false),
-    (5,  false),
-    (4,  true), // drop because too many packets
+    (5,  true),
     (6,  false),
     (4,  true),
     (5,  true))

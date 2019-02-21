@@ -12,7 +12,7 @@ import testchipip.{StreamIO, StreamChannel, TLHelper}
 import IceNetConsts._
 
 case class NICConfig(
-  inBufPackets: Int = 2,
+  inBufFlits: Int  = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
@@ -23,7 +23,7 @@ case object NICKey extends Field[NICConfig]
 trait HasNICParameters {
   implicit val p: Parameters
   val nicExternal = p(NICKey)
-  val inBufPackets = nicExternal.inBufPackets
+  val inBufFlits = nicExternal.inBufFlits
   val outBufFlits = nicExternal.outBufFlits
   val nMemXacts = nicExternal.nMemXacts
   val maxAcquireBytes = nicExternal.maxAcquireBytes
@@ -171,7 +171,7 @@ class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
     val io = IO(new Bundle {
       val recv = Flipped(new IceNicRecvIO)
       val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
-      val length = Input(UInt(NET_LEN_BITS.W))
+      val length = Flipped(Valid(UInt(NET_LEN_BITS.W)))
     })
 
     val streaming = RegInit(false.B)
@@ -179,11 +179,11 @@ class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
     val helper = DecoupledHelper(
       io.recv.req.valid,
       writer.module.io.req.ready,
-      io.in.valid, !streaming)
+      io.length.valid, !streaming)
 
     writer.module.io.req.valid := helper.fire(writer.module.io.req.ready)
     writer.module.io.req.bits.address := io.recv.req.bits
-    writer.module.io.req.bits.length := io.length
+    writer.module.io.req.bits.length := io.length.bits
     io.recv.req.ready := helper.fire(io.recv.req.valid)
 
     writer.module.io.in.valid := io.in.valid && streaming
@@ -217,7 +217,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
   })
 
-  val buffer = Module(new NetworkPacketBuffer(inBufPackets))
+  val buffer = Module(new NetworkPacketBuffer(inBufFlits))
   buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
@@ -322,8 +322,19 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
 
   net <> outer.icenic.module.io.ext
 
-  def connectNicLoopback(qDepth: Int = 64) {
-    net.in <> Queue(net.out, qDepth)
+  def connectNicLoopback(qDepth: Int = ETH_MAX_BYTES / NET_IF_BYTES) {
+    val creditTrackerParams = p(NICKey).creditTracker
+    if (creditTrackerParams.nonEmpty) {
+      val params = creditTrackerParams.get.copy(inCredits = qDepth)
+      val tracker = Module(new CreditTracker(params))
+      val buffer = Module(new NetworkPacketBuffer(qDepth))
+      tracker.io.ext.flipConnect(net)
+      buffer.io.stream.in <> tracker.io.int.in
+      tracker.io.int.out <> buffer.io.stream.out
+      tracker.io.in_free := buffer.io.stream.out.fire()
+    } else {
+      net.in <> Queue(net.out, qDepth)
+    }
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)
