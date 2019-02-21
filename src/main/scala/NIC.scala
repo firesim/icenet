@@ -173,7 +173,7 @@ class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
     val io = IO(new Bundle {
       val recv = Flipped(new IceNicRecvIO)
       val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
-      val length = Input(UInt(NET_LEN_BITS.W))
+      val length = Flipped(Valid(UInt(NET_LEN_BITS.W)))
     })
 
     val streaming = RegInit(false.B)
@@ -181,11 +181,11 @@ class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
     val helper = DecoupledHelper(
       io.recv.req.valid,
       writer.module.io.req.ready,
-      io.in.valid, !streaming)
+      io.length.valid, !streaming)
 
     writer.module.io.req.valid := helper.fire(writer.module.io.req.ready)
     writer.module.io.req.bits.address := io.recv.req.bits
-    writer.module.io.req.bits.length := io.length
+    writer.module.io.req.bits.length := io.length.bits
     io.recv.req.ready := helper.fire(io.recv.req.valid)
 
     writer.module.io.in.valid := io.in.valid && streaming
