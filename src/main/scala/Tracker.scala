@@ -9,8 +9,8 @@ import IceNetConsts._
 
 case class CreditTrackerParams(
   inCredits: Int = 0,
-  outMaxCredits: Int = 255,
-  updatePeriod: Int = 255,
+  outMaxCredits: Int = 65535,
+  updatePeriod: Int = 4095,
   outTimeout: Option[Int] = None)
 
 class CreditInTracker(params: CreditTrackerParams) extends Module {
@@ -73,7 +73,7 @@ class CreditOutTracker(params: CreditTrackerParams) extends Module {
   io.ext.in.ready := isUpdate || isUpdateReg || io.int.in.ready
 
   credits := (credits + Mux(io.ext.in.fire() && isUpdate, updateData, 0.U)) -
-                        Mux(io.ext.out.fire() && io.ext.out.bits.last, 1.U, 0.U)
+                        Mux(io.ext.out.fire(), 1.U, 0.U)
 
   io.ext.out.valid := io.int.out.valid && canForward
   io.ext.out.bits  := io.int.out.bits
@@ -105,7 +105,7 @@ class CreditTracker(params: CreditTrackerParams) extends Module {
   outTrack.io.ext.in <> io.ext.in
   io.int.in <> outTrack.io.int.in
   outTrack.io.int.out <> io.int.out
-  inTrack.io.in_alloc := io.int.in.fire() && io.int.in.bits.last
+  inTrack.io.in_alloc := io.int.in.fire()
   inTrack.io.in_free  := io.in_free
 
   val extOutArb = Module(new HellaPeekingArbiter(
@@ -122,27 +122,40 @@ class CreditTrackerTest extends UnitTest {
   val testData = VecInit(Seq(0, 5, 7, 28 << 16, 11, 34 << 16).map(_.U(NET_IF_WIDTH.W)))
   val testLast = VecInit(Seq(false, false, true, false, true, true).map(_.B))
 
-  val tracker = Module(new CreditTracker(CreditTrackerParams(2)))
-  val queue = Module(new LatencyPipe(new StreamChannel(NET_IF_WIDTH), 10))
+  val qDepth = 4
+  val latency = 10
 
-  val (outIdx, outDone) = Counter(tracker.io.int.out.fire(), testData.size)
-  val (inIdx, inDone) = Counter(queue.io.out.fire(), testData.size)
+  val ltracker = Module(new CreditTracker(CreditTrackerParams(qDepth)))
+  val rtracker = Module(new CreditTracker(CreditTrackerParams(qDepth)))
+  val lqueue = Module(new Queue(new StreamChannel(NET_IF_WIDTH), qDepth))
+  val rqueue = Module(new Queue(new StreamChannel(NET_IF_WIDTH), qDepth))
 
-  tracker.io.ext.in <> tracker.io.ext.out
-  tracker.io.in_free := queue.io.out.fire() && queue.io.out.bits.last
-  tracker.io.int.out.valid := state === s_send
-  tracker.io.int.out.bits.data := testData(outIdx)
-  tracker.io.int.out.bits.last := testLast(outIdx)
-  tracker.io.int.out.bits.keep := NET_FULL_KEEP
-  queue.io.in <> tracker.io.int.in
-  queue.io.out.ready := true.B
+  val (outIdx, outDone) = Counter(ltracker.io.int.out.fire(), testData.size)
+  val (inIdx, inDone) = Counter(lqueue.io.deq.fire(), testData.size)
 
-  assert(!queue.io.out.valid ||
-    (queue.io.out.bits.data === testData(inIdx) &&
-     queue.io.out.bits.last === testLast(inIdx)),
+  ltracker.io.in_free := lqueue.io.deq.fire()
+  ltracker.io.int.out.valid := state === s_send
+  ltracker.io.int.out.bits.data := testData(outIdx)
+  ltracker.io.int.out.bits.last := testLast(outIdx)
+  ltracker.io.int.out.bits.keep := NET_FULL_KEEP
+  lqueue.io.enq <> ltracker.io.int.in
+  lqueue.io.deq.ready := true.B
+
+  rtracker.io.in_free := rqueue.io.deq.fire()
+  rtracker.io.int.out <> rqueue.io.deq
+  rqueue.io.enq <> rtracker.io.int.in
+
+  rtracker.io.ext.flipConnect(NetDelay(ltracker.io.ext, latency))
+
+  assert(!lqueue.io.deq.valid ||
+    (lqueue.io.deq.bits.data === testData(inIdx) &&
+     lqueue.io.deq.bits.last === testLast(inIdx)),
    "CreditTrackerTest: data or last does not match")
 
-  assert(!tracker.io.ext.out.valid || tracker.io.ext.in.ready,
+  assert(!ltracker.io.ext.in.valid || ltracker.io.ext.in.ready,
+    "External input was back-pressured")
+
+  assert(!rtracker.io.ext.in.valid || rtracker.io.ext.in.ready,
     "External input was back-pressured")
 
   when (state === s_idle && io.start) { state := s_send }

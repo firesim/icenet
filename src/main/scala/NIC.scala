@@ -12,7 +12,7 @@ import testchipip.{StreamIO, StreamChannel, TLHelper}
 import IceNetConsts._
 
 case class NICConfig(
-  inBufPackets: Int = 2,
+  inBufFlits: Int  = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
@@ -24,7 +24,7 @@ case object NICKey extends Field[NICConfig]
 trait HasNICParameters {
   implicit val p: Parameters
   val nicExternal = p(NICKey)
-  val inBufPackets = nicExternal.inBufPackets
+  val inBufFlits = nicExternal.inBufFlits
   val outBufFlits = nicExternal.outBufFlits
   val nMemXacts = nicExternal.nMemXacts
   val maxAcquireBytes = nicExternal.maxAcquireBytes
@@ -221,9 +221,9 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   })
 
   val buffer = Module(new NetworkPacketBuffer(
-    inBufPackets, dropless = creditTrackerParams.nonEmpty))
+    inBufFlits, dropless = creditTrackerParams.nonEmpty))
   buffer.io.stream.in <> io.in
-  io.buf_free := buffer.io.stream.out.fire() && buffer.io.stream.out.bits.last
+  io.buf_free := buffer.io.stream.out.fire()
 
   val writer = outer.writer.module
   writer.io.length := buffer.io.length
@@ -290,7 +290,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     // connect externally
     if (creditTrackerParams.nonEmpty) {
       val tracker = Module(new CreditTracker(
-        creditTrackerParams.get.copy(inCredits = inBufPackets)))
+        creditTrackerParams.get.copy(inCredits = inBufFlits)))
       recvPath.module.io.in <> tracker.io.int.in
       tracker.io.int.out <> sendPath.module.io.out
       io.ext.out <> tracker.io.ext.out
@@ -337,8 +337,19 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
 
   net <> outer.icenic.module.io.ext
 
-  def connectNicLoopback(qDepth: Int = 64) {
-    net.in <> Queue(net.out, qDepth)
+  def connectNicLoopback(qDepth: Int = ETH_MAX_BYTES / NET_IF_BYTES) {
+    val creditTrackerParams = p(NICKey).creditTracker
+    if (creditTrackerParams.nonEmpty) {
+      val params = creditTrackerParams.get.copy(inCredits = qDepth)
+      val tracker = Module(new CreditTracker(params))
+      val buffer = Module(new NetworkPacketBuffer(qDepth))
+      tracker.io.ext.flipConnect(net)
+      buffer.io.stream.in <> tracker.io.int.in
+      tracker.io.int.out <> buffer.io.stream.out
+      tracker.io.in_free := buffer.io.stream.out.fire()
+    } else {
+      net.in <> Queue(net.out, qDepth)
+    }
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)

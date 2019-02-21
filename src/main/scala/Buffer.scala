@@ -38,19 +38,17 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 }
 
 class NetworkPacketBuffer[T <: Data](
-    nPackets: Int,
-    bufBytesPerPacket: Int = ETH_MAX_BYTES,
+    bufWords: Int,
     maxBytes: Int = ETH_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
     headerType: T = new EthernetHeader,
     wordBytes: Int = NET_IF_WIDTH / 8,
     dropless: Boolean = false) extends Module {
 
-  val bufWordsPerPacket = bufBytesPerPacket / wordBytes
   val maxWords = maxBytes / wordBytes
   val headerWords = headerBytes / wordBytes
   val wordBits = wordBytes * 8
-  val bufWords = bufWordsPerPacket * nPackets
+  val nPackets = (bufWords - 1) / (headerWords + 1) + 1
 
   val idxBits = log2Ceil(bufWords)
   val phaseBits = log2Ceil(nPackets + 1)
@@ -98,6 +96,8 @@ class NetworkPacketBuffer[T <: Data](
   val pktCount = RegInit(0.U(phaseBits.W))
   val nextLen = inLen + PopCount(io.stream.in.bits.keep)
   val hasPackets = pktCount > 0.U
+
+  assert(pktCount <= nPackets.U, "Accepted more packets than possible")
 
   def bytesToWords(nbytes: UInt): UInt =
     nbytes(lenBits-1, byteOffset) + nbytes(byteOffset-1, 0).orR
@@ -190,7 +190,8 @@ class NetworkPacketBuffer[T <: Data](
 
     when (io.stream.in.bits.last) {
       val nextPhase = wrapInc(inPhase, nPackets)
-      val tooSmall = inIdx < (headerWords - 1).U
+      // Drop packets if there aren't more than headerBytes amount of data
+      val tooSmall = inIdx < headerWords.U
       when (!startDropping && !inDrop && !tooSmall) {
         setLength := true.B
         inPhase := nextPhase
@@ -216,7 +217,12 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest(100000) {
-  val buffer = Module(new NetworkPacketBuffer(2, 24, 32, 8, UInt(64.W), 4))
+  val buffer = Module(new NetworkPacketBuffer(
+    bufWords = 12,
+    maxBytes = 32,
+    headerBytes = 8,
+    headerType = UInt(64.W),
+    wordBytes = 4))
 
   val inPackets = Seq(
     (10, false), // drop because too long
@@ -228,8 +234,7 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
     (6,  false), // drop because buffer full
     (4,  true),
     (3,  false),
-    (5,  false),
-    (4,  true), // drop because too many packets
+    (5,  true),
     (6,  false),
     (4,  true),
     (5,  true))

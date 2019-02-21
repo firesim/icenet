@@ -10,6 +10,7 @@ import IceNetConsts._
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
+    val finished = Output(Bool())
     val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
   })
 
@@ -24,8 +25,10 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
   val pktOffset = Reg(UInt(log2Ceil(maxLength).W))
   val dataIdx = Reg(UInt(log2Ceil(totalLength).W))
   val sending = RegInit(false.B)
+  val started = RegInit(false.B)
 
   when (!sending && io.start) {
+    started := true.B
     sending := true.B
     pktIdx := 0.U
     pktOffset := 0.U
@@ -48,6 +51,7 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
   io.out.bits.data := dataVec(dataIdx)
   io.out.bits.keep := NET_FULL_KEEP
   io.out.bits.last := pktOffset === lengthVec(pktIdx) - 1.U
+  io.finished := started && !sending
 }
 
 class PacketCheck(
