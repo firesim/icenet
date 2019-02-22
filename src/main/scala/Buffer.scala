@@ -43,6 +43,7 @@ class NetworkPacketBuffer[T <: Data](
     headerBytes: Int = ETH_HEAD_BYTES,
     headerType: T = new EthernetHeader,
     wordBytes: Int = NET_IF_WIDTH / 8,
+    dropChecks: Seq[(T, StreamChannel, Bool) => Bool] = Nil,
     dropless: Boolean = false) extends Module {
 
   val maxWords = maxBytes / wordBytes
@@ -60,6 +61,7 @@ class NetworkPacketBuffer[T <: Data](
     val header = Valid(headerType)
     val length = Valid(UInt(lenBits.W))
     val count = Output(UInt(log2Ceil(nPackets+1).W))
+    val free = Output(UInt(8.W))
   })
 
   def discontinuous(bits: UInt, w: Int): Bool =
@@ -72,7 +74,8 @@ class NetworkPacketBuffer[T <: Data](
     "NetworkPacketBuffer does not handle missing data")
 
   val dataBuffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
-  val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
+  val headerVecs = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
+  val headers = VecInit(headerVecs.map(_.asTypeOf(headerType)))
 
   val lenBuffer = Module(new BufferBRAM(nPackets, UInt(lenBits.W)))
 
@@ -135,7 +138,7 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.bits.keep := Mux(outLastReg, finalKeep(length), ~0.U(wordBytes.W))
   io.stream.in.ready := true.B
   io.header.valid := hasPackets
-  io.header.bits := headers(outPhase).asTypeOf(headerType)
+  io.header.bits := headers(outPhase)
   io.length.bits := lenBuffer.io.read.data
   io.length.valid := lengthKnown
   io.count := pktCount
@@ -154,9 +157,22 @@ class NetworkPacketBuffer[T <: Data](
   lenBuffer.io.write.addr := inPhase
   lenBuffer.io.write.data := nextLen
 
+  val headerValid = inIdx >= headerWords.U
+  val customDrop = dropChecks.map(check => check(
+                                    headers(inPhase),
+                                    io.stream.in.bits,
+                                    io.stream.in.fire() && headerValid))
+                             .foldLeft(false.B)(_ || _)
   val startDropping =
     (inPhase === outPhase && hasPackets) ||
     (inIdx === maxWords.U) || bufFull
+
+  val capDrop = startDropping || inDrop
+  val nonCapDrop = !headerValid || customDrop
+  val anyDrop = capDrop || nonCapDrop
+  val dropLastFire = anyDrop && io.stream.in.fire() && io.stream.in.bits.last
+
+  io.free := ren + Mux(dropLastFire, inIdx + 1.U, 0.U)
 
   when (io.stream.out.fire()) { outValidReg := false.B }
 
@@ -174,7 +190,7 @@ class NetworkPacketBuffer[T <: Data](
     }
   }
 
-  when (hwen) { headers(inPhase)(inIdx) := io.stream.in.bits.data }
+  when (hwen) { headerVecs(inPhase)(inIdx) := io.stream.in.bits.data }
 
   when (wen) { bufHead := wrapInc(bufHead, bufWords) }
 
@@ -191,15 +207,15 @@ class NetworkPacketBuffer[T <: Data](
     when (io.stream.in.bits.last) {
       val nextPhase = wrapInc(inPhase, nPackets)
       // Drop packets if there aren't more than headerBytes amount of data
-      val tooSmall = inIdx < headerWords.U
-      when (!startDropping && !inDrop && !tooSmall) {
+      when (!anyDrop) {
         setLength := true.B
         inPhase := nextPhase
       } .otherwise {
         wen := false.B
         revertHead := inIdx =/= 0.U
         if (dropless) {
-          assert(false.B, "Packet dropped by buffer")
+          assert(!capDrop,
+            "Packet dropped by buffer due to insufficient capacity")
         } else {
           printf("WARNING: dropped packet with %d flits\n", inIdx + 1.U)
         }

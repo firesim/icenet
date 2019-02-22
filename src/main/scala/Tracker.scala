@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.util.{HellaPeekingArbiter, LatencyPipe}
 import freechips.rocketchip.unittest.UnitTest
-import testchipip.{StreamIO, ValidStreamIO, StreamChannel}
+import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
 case class CreditTrackerParams(
@@ -17,7 +17,7 @@ class CreditInTracker(params: CreditTrackerParams) extends Module {
   val io = IO(new Bundle {
     val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
     val in_alloc = Input(Bool())
-    val in_free  = Input(Bool())
+    val in_free  = Input(UInt(8.W))
   })
 
   val updatePeriod = params.updatePeriod
@@ -38,10 +38,8 @@ class CreditInTracker(params: CreditTrackerParams) extends Module {
     timeout := timeout - 1.U
   }
 
-  unassigned := (unassigned - Mux(io.out.fire(), unassigned, 0.U)) +
-                  Mux(io.in_free, 1.U, 0.U)
-  assigned := (assigned + Mux(io.out.fire(), unassigned, 0.U)) -
-                  Mux(io.in_alloc, 1.U, 0.U)
+  unassigned := (unassigned - Mux(io.out.fire(), unassigned, 0.U)) + io.in_free
+  assigned := (assigned + Mux(io.out.fire(), unassigned, 0.U)) - io.in_alloc
 }
 
 class CreditOutTracker(params: CreditTrackerParams) extends Module {
@@ -96,7 +94,7 @@ class CreditTracker(params: CreditTrackerParams) extends Module {
   val io = IO(new Bundle {
     val ext = new StreamIO(NET_IF_WIDTH)
     val int = Flipped(new StreamIO(NET_IF_WIDTH))
-    val in_free = Input(Bool())
+    val in_free = Input(UInt(8.W))
   })
 
   val outTrack = Module(new CreditOutTracker(params))
@@ -108,8 +106,7 @@ class CreditTracker(params: CreditTrackerParams) extends Module {
   inTrack.io.in_alloc := io.int.in.fire()
   inTrack.io.in_free  := io.in_free
 
-  val extOutArb = Module(new HellaPeekingArbiter(
-    new StreamChannel(NET_IF_WIDTH), 2, (ch: StreamChannel) => ch.last))
+  val extOutArb = Module(new PacketArbiter(2))
   extOutArb.io.in <> Seq(inTrack.io.out, outTrack.io.ext.out).map(Queue(_, 2))
   io.ext.out <> extOutArb.io.out
 }
@@ -186,11 +183,8 @@ class CreditPipe(latency: Int, params: CreditTrackerParams) extends Module {
   lrtracker.io.int.out <> rlbuffer.io.stream.out
   rltracker.io.int.out <> lrbuffer.io.stream.out
 
-  val lrbufout = lrbuffer.io.stream.out
-  val rlbufout = rlbuffer.io.stream.out
-
-  lrtracker.io.in_free := lrbufout.fire() && lrbufout.bits.last
-  rltracker.io.in_free := rlbufout.fire() && rlbufout.bits.last
+  lrtracker.io.in_free := lrbuffer.io.free
+  rltracker.io.in_free := rlbuffer.io.free
 }
 
 object CreditPipe {

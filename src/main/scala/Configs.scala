@@ -11,6 +11,7 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
     Seq(
       Module(new NetworkPacketBufferTest),
       Module(new CreditTrackerTest),
+      Module(new PauserTest),
       Module(new NetworkTapTest),
       Module(new RateLimiterTest),
       Module(new AlignerTest),
