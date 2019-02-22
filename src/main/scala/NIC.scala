@@ -16,7 +16,8 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 10,
+  usePauser: Boolean = false)
 
 case object NICKey extends Field[NICConfig]
 
@@ -28,7 +29,7 @@ trait HasNICParameters {
   val nMemXacts = nicExternal.nMemXacts
   val maxAcquireBytes = nicExternal.maxAcquireBytes
   val ctrlQueueDepth = nicExternal.ctrlQueueDepth
-  val creditTrackerParams = nicExternal.creditTracker
+  val usePauser = nicExternal.usePauser
 }
 
 abstract class NICLazyModule(implicit p: Parameters)
@@ -39,6 +40,11 @@ abstract class NICModule(implicit val p: Parameters)
 
 abstract class NICBundle(implicit val p: Parameters)
   extends Bundle with HasNICParameters
+
+class PacketArbiter(arbN: Int, rr: Boolean = false)
+  extends HellaPeekingArbiter(
+    new StreamChannel(NET_IF_WIDTH), arbN,
+    (ch: StreamChannel) => ch.last, rr = rr)
 
 class IceNicSendIO extends Bundle {
   val req = Decoupled(UInt(NET_IF_WIDTH.W))
@@ -149,9 +155,7 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     io.send.comp <> reader.module.io.resp
 
     val unlimitedOut = if (nInputTaps > 0) {
-      val arb = Module(new HellaPeekingArbiter(
-        new StreamChannel(NET_IF_WIDTH), 1 + nInputTaps,
-        (chan: StreamChannel) => chan.last, rr = true))
+      val arb = Module(new PacketArbiter(1 + nInputTaps, rr = true))
       arb.io.in <> (reader.module.io.out +: io.tap.get)
       arb.io.out
     } else { reader.module.io.out }
@@ -215,10 +219,14 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
     val tap = outer.tapFuncs.nonEmpty.option(
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
+    val buf_free = Output(UInt(8.W))
   })
 
-  val buffer = Module(new NetworkPacketBuffer(inBufFlits))
+  val dropChecks = if (usePauser) Seq(PauseDropCheck(_, _, _)) else Nil
+  val buffer = Module(new NetworkPacketBuffer(
+    inBufFlits, dropChecks = dropChecks, dropless = usePauser))
   buffer.io.stream.in <> io.in
+  io.buf_free := buffer.io.free
 
   val writer = outer.writer.module
   writer.io.length := buffer.io.length
@@ -234,6 +242,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
 class NICIO extends StreamIO(NET_IF_WIDTH) {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings)
+  val pauser = Input(new PauserSettings)
 
   override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
@@ -283,8 +292,19 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     recvPath.module.io.recv <> control.module.io.recv
 
     // connect externally
-    recvPath.module.io.in <> io.ext.in
-    io.ext.out <> sendPath.module.io.out
+    if (usePauser) {
+      val pauser = Module(new Pauser(inBufFlits))
+      pauser.io.int.out <> sendPath.module.io.out
+      recvPath.module.io.in <> pauser.io.int.in
+      io.ext.out <> pauser.io.ext.out
+      pauser.io.ext.in <> io.ext.in
+      pauser.io.in_free := recvPath.module.io.buf_free
+      pauser.io.macAddr := io.ext.macAddr
+      pauser.io.settings := io.ext.pauser
+    } else {
+      recvPath.module.io.in <> io.ext.in
+      io.ext.out <> sendPath.module.io.out
+    }
 
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
@@ -322,23 +342,30 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
 
   net <> outer.icenic.module.io.ext
 
-  def connectNicLoopback(qDepth: Int = ETH_MAX_BYTES / NET_IF_BYTES) {
-    val creditTrackerParams = p(NICKey).creditTracker
-    if (creditTrackerParams.nonEmpty) {
-      val params = creditTrackerParams.get.copy(inCredits = qDepth)
-      val tracker = Module(new CreditTracker(params))
-      val buffer = Module(new NetworkPacketBuffer(qDepth))
-      tracker.io.ext.flipConnect(net)
-      buffer.io.stream.in <> tracker.io.int.in
-      tracker.io.int.out <> buffer.io.stream.out
-      tracker.io.in_free := buffer.io.stream.out.fire()
-    } else {
-      net.in <> Queue(net.out, qDepth)
-    }
+  import PauseConsts.BT_PER_QUANTA
+
+  private val packetWords = ETH_MAX_BYTES / NET_IF_BYTES
+  private val packetQuanta = (ETH_MAX_BYTES * 8) / BT_PER_QUANTA
+
+  def connectNicLoopback(qDepth: Int = 4 * packetWords, latency: Int = 10) {
+
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)
     net.rlimit.size := PlusArg("rlimit-size", 8)
+    net.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
+    net.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
+    net.pauser.refresh := PlusArg("pauser-refresh", packetWords)
+
+    if (p(NICKey).usePauser) {
+      val pauser = Module(new PauserComplex(qDepth))
+      pauser.io.ext.flipConnect(NetDelay(net, latency))
+      pauser.io.int.out <> pauser.io.int.in
+      pauser.io.macAddr := net.macAddr + (1 << 40).U
+      pauser.io.settings := net.pauser
+    } else {
+      net.in <> Queue(LatencyPipe(net.out, latency), qDepth)
+    }
   }
 
   def connectSimNetwork(clock: Clock, reset: Bool) {

@@ -10,6 +10,7 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
   case UnitTests => (p: Parameters) => {
     Seq(
       Module(new NetworkPacketBufferTest),
+      Module(new PauserTest),
       Module(new NetworkTapTest),
       Module(new RateLimiterTest),
       Module(new AlignerTest),

@@ -102,7 +102,8 @@ class NetDelay(latency: Int) extends Module {
 object NetDelay {
   def apply(right: StreamIO, latency: Int): StreamIO = {
     val delay = Module(new NetDelay(latency))
-    delay.io.right <> right
+    delay.io.right.out <> right.out
+    right.in <> delay.io.right.in
     delay.io.left
   }
 }
