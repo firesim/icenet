@@ -403,6 +403,7 @@ class NICIOvonly extends Bundle {
   val out = Valid(new StreamChannel(NET_IF_WIDTH))
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings)
+  val pauser = Input(new PauserSettings)
 
   override def cloneType = (new NICIOvonly).asInstanceOf[this.type]
 }
@@ -418,6 +419,7 @@ object NICIOvonly {
     assert(!vonly.in.valid || nicio.in.ready, "NIC input not ready for valid")
     nicio.macAddr := vonly.macAddr
     nicio.rlimit  := vonly.rlimit
+    nicio.pauser  := vonly.pauser
     vonly
   }
 }
