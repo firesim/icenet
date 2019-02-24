@@ -58,7 +58,6 @@ class NetworkPacketBuffer[T <: Data](
 
   val io = IO(new Bundle {
     val stream = new StreamIO(wordBytes * 8)
-    val header = Valid(headerType)
     val length = Valid(UInt(lenBits.W))
     val count = Output(UInt(log2Ceil(nPackets+1).W))
     val free = Output(UInt(8.W))
@@ -74,8 +73,8 @@ class NetworkPacketBuffer[T <: Data](
     "NetworkPacketBuffer does not handle missing data")
 
   val dataBuffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
-  val headerVecs = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
-  val headers = VecInit(headerVecs.map(_.asTypeOf(headerType)))
+  val headerVec = Reg(Vec(headerWords, Bits(wordBits.W)))
+  val header = headerVec.asTypeOf(headerType)
 
   val lenBuffer = Module(new BufferBRAM(nPackets, UInt(lenBits.W)))
 
@@ -137,8 +136,6 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.bits.last := outLastReg
   io.stream.out.bits.keep := Mux(outLastReg, finalKeep(length), ~0.U(wordBytes.W))
   io.stream.in.ready := true.B
-  io.header.valid := hasPackets
-  io.header.bits := headers(outPhase)
   io.length.bits := lenBuffer.io.read.data
   io.length.valid := lengthKnown
   io.count := pktCount
@@ -159,7 +156,7 @@ class NetworkPacketBuffer[T <: Data](
 
   val headerValid = inIdx >= headerWords.U
   val customDrop = dropChecks.map(check => check(
-                                    headers(inPhase),
+                                    header,
                                     io.stream.in.bits,
                                     io.stream.in.fire() && headerValid))
                              .foldLeft(false.B)(_ || _)
@@ -190,7 +187,7 @@ class NetworkPacketBuffer[T <: Data](
     }
   }
 
-  when (hwen) { headerVecs(inPhase)(inIdx) := io.stream.in.bits.data }
+  when (hwen) { headerVec(inIdx) := io.stream.in.bits.data }
 
   when (wen) { bufHead := wrapInc(bufHead, bufWords) }
 
@@ -323,8 +320,6 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
   assert(!buffer.io.stream.out.valid || !buffer.io.stream.out.bits.last ||
     outIdx === outPacketLengths(outPhase),
     "NetworkPacketBufferTest: got output packet with wrong length")
-  assert(!buffer.io.header.valid || buffer.io.header.bits === (1L << 32).U,
-    "NetworkPacketBufferTest: unexpected header")
 
   io.finished := state === s_done
 }
