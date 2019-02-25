@@ -8,8 +8,8 @@ import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
 object PauseConsts {
-  val MAC_ETHTYPE = 0x8088
-  val PAUSE_TYPE = 0x0001
+  val MAC_ETHTYPE = 0x8808
+  val PAUSE_CTRL = 0x0001
   val BT_PER_QUANTA = 512
   val CYCLES_PER_QUANTA = BT_PER_QUANTA / NET_IF_WIDTH
   val MULTICAST_MACADDR = 0x010000C28001L
@@ -33,7 +33,7 @@ object PauseDropCheck extends NetworkEndianHelpers {
   def apply(header: EthernetHeader, ch: StreamChannel, update: Bool): Bool = {
     val first = RegInit(true.B)
     val isPause = ntohs(header.ethType) === MAC_ETHTYPE.U &&
-                  ntohs(ch.data(15, 0)) === PAUSE_TYPE.U && first
+                  ntohs(ch.data(15, 0)) === PAUSE_CTRL.U && first
     val isPauseReg = RegInit(false.B)
 
     when (update && first)  { first := false.B; isPauseReg := isPause }
@@ -83,7 +83,7 @@ class Pauser(creditInit: Int) extends Module with NetworkEndianHelpers {
       }
       is (s_mac) {
         val isMac = ntohs(inHeader.ethType) === MAC_ETHTYPE.U
-        val isPause = ntohs(data(15, 0)) === PAUSE_TYPE.U
+        val isPause = ntohs(data(15, 0)) === PAUSE_CTRL.U
         val quanta = ntohs(data(31, 16))
         val cycles = quanta << log2Ceil(CYCLES_PER_QUANTA).U
         when (isMac && isPause) { outPauseTimer := cycles }
@@ -106,7 +106,7 @@ class Pauser(creditInit: Int) extends Module with NetworkEndianHelpers {
     io.macAddr,
     htons(MAC_ETHTYPE.U(16.W)))
   val outVec = VecInit(outHeader.toWords() :+ Cat(
-    htons(io.settings.quanta), htons(PAUSE_TYPE.U(16.W))))
+    htons(io.settings.quanta), htons(PAUSE_CTRL.U(16.W))))
   val sendPause = RegInit(false.B)
   val (outIdx, outDone) = Counter(arb.io.in(0).fire(), outVec.size)
 
