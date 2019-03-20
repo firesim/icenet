@@ -261,6 +261,13 @@ class IceNicReaderModule(outer: IceNicReader)
   cover((state === s_read) && !io.alloc.ready && tl.a.ready, "NIC_SEND_BUF_FULL", "nic send blocked by full buffer")
   cover(tl.a.valid && !tl.a.ready , "NIC_SEND_MEM_BUSY", "nic send blocked by memory bandwidth")
 
+  when (io.send.req.fire()) {
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Start sending packet\n"))
+  }
+  when (io.send.comp.fire()) {
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Stop sending packet\n"))
+  }
+
   val outLeftKeep = xactLeftKeep(tl.d.bits.source)
   val outRightKeep = xactRightKeep(tl.d.bits.source)
 
