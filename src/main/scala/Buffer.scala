@@ -6,6 +6,7 @@ import freechips.rocketchip.unittest.UnitTest
 import scala.util.Random
 import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
+import freechips.rocketchip.util.property._
 
 class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   val addrBits = log2Ceil(n)
@@ -138,6 +139,8 @@ class NetworkPacketBuffer[T <: Data](
 
   when (ren =/= wen) { maybeFull := wen }
 
+  val dropPacket = WireInit(false.B)
+
   when (io.stream.in.fire()) {
     when (inIdx === 0.U) { startHead := bufHead }
     when (startDropping) { inDrop := true.B }
@@ -151,14 +154,17 @@ class NetworkPacketBuffer[T <: Data](
         inPhase := nextPhase
         bufLengths(inPhase) := inIdx + 1.U
       } .otherwise {
+        dropPacket := true.B
         wen := false.B
         revertHead := inIdx =/= 0.U
-        printf("WARNING: dropped packet with %d flits\n", inIdx + 1.U)
+        printf(midas.targetutils.SynthesizePrintf("WARNING: dropped packet with %d flits\n", inIdx + 1.U))
       }
       inIdx := 0.U
       inDrop := false.B
     }
   }
+
+  cover(dropPacket , "NIC_PACKET_DROP", "Packet drop in the icenet nic")
 
   when (revertHead) {
     bufHead := startHead

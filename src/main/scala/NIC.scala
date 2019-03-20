@@ -13,6 +13,7 @@ import freechips.rocketchip.util._
 import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.math.max
 import IceNetConsts._
+import freechips.rocketchip.util.property._
 
 case class NICConfig(
   inBufPackets: Int = 2,
@@ -62,6 +63,28 @@ trait IceNicControllerModule extends HasRegMap {
   // hold length of received packets
   val recvCompQueue = Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
   val recvCompCount = queueCount(recvCompQueue.io, qDepth)
+  val everSent = RegInit(false.B)
+  when (sendReqQueue.io.enq.fire()) {
+      everSent := true.B
+  }
+
+  cover(!sendReqQueue.io.enq.ready, "NIC_SEND_CTRL_QUEUE_FULL", "NIC is blocked because of lack of space in the control queue")
+  cover(everSent && !sendReqQueue.io.deq.valid, "NIC_SEND_CTRL_QUEUE_EMPTY", "NIC is not working because the control queue is empty")
+  cover(recvCompQueue.io.deq.valid, "NIC_RECV_COMP_OCCUPIED", "NIC receive completion not processed")
+  cover(sendCompCount > 0.U, "NIC_SEND_COMP_OCCUPIED", "NIC send completion not processed")
+
+  when (sendReqQueue.io.enq.fire() || sendReqQueue.io.deq.fire()) {
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Send Request Queue count %d\n", sendReqCount))
+  }
+  when (recvReqQueue.io.enq.fire() || recvReqQueue.io.deq.fire()) {
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Request Queue count %d\n", recvReqCount))
+  }
+  when (io.send.comp.fire() || sendCompDown) {
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Send Completion Queue count %d\n", sendCompCount))
+  }
+  when (recvCompQueue.io.enq.fire() || recvCompQueue.io.deq.fire()) {
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Completion Queue count %d\n", recvCompCount))
+  }
 
   val sendCompValid = sendCompCount > 0.U
   val intMask = RegInit(0.U(2.W))
@@ -234,6 +257,10 @@ class IceNicReaderModule(outer: IceNicReader)
     toAddress = sendaddr,
     lgSize = reqSize)._2
 
+  cover((state === s_read) && xactBusy.andR && tl.a.ready, "NIC_SEND_XACT_ALL_BUSY", "nic send blocked by lack of transactions")
+  cover((state === s_read) && !io.alloc.ready && tl.a.ready, "NIC_SEND_BUF_FULL", "nic send blocked by full buffer")
+  cover(tl.a.valid && !tl.a.ready , "NIC_SEND_MEM_BUSY", "nic send blocked by memory bandwidth")
+
   val outLeftKeep = xactLeftKeep(tl.d.bits.source)
   val outRightKeep = xactRightKeep(tl.d.bits.source)
 
@@ -361,6 +388,9 @@ class IceNicWriterModule(outer: IceNicWriter)
   io.recv.comp.valid := state === s_complete && !xactBusy.orR
   io.recv.comp.bits := idx << byteAddrBits.U
 
+  cover((state === s_data && io.in.valid) && !canSend && tl.a.ready , "NIC_RECV_XACT_ALL_BUSY", "nic receive blocked by lack of transactions")
+  cover(tl.a.valid && !tl.a.ready , "NIC_RECV_MEM_BUSY", "nic receive blocked by memory bandwidth")
+
   when (io.recv.req.fire()) {
     idx := 0.U
     baseAddr := io.recv.req.bits >> byteAddrBits.U
@@ -383,6 +413,10 @@ class IceNicWriterModule(outer: IceNicWriter)
   }
 
   when (io.recv.comp.fire()) { state := s_idle }
+
+  //cover(!io.recv.req.valid && io.recv.req.ready, "NIC_NO_AVAIL_RECEIVE_FRAMES", "NIC receiving is blocked by lack of receive frames in the control queue")
+  cover(io.in.valid && state =/= s_data, "NIC_NO_AVAIL_RECEIVE_FRAMES", "NIC receiving is blocked by lack of receive frames in the control queue")
+
 }
 
 /*
