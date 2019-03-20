@@ -16,7 +16,7 @@ import IceNetConsts._
 
 case class NICConfig(
   inBufPackets: Int = 2,
-  outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
+  outBufFlits: Int = 2 * ETH_STANDARD_MAX_FLITS,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
   ctrlQueueDepth: Int = 10)

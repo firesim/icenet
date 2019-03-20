@@ -119,8 +119,7 @@ class SimpleSwitch(address: BigInt, n: Int)
     })
     val inBuffers  = Seq.fill(n) { Module(new NetworkPacketBuffer(2)) }
     val outBuffers = Seq.fill(n) {
-      val ethWords = ETH_MAX_BYTES * 8 / NET_IF_WIDTH
-      Module(new Queue(new StreamChannel(NET_IF_WIDTH), ethWords))
+      Module(new Queue(new StreamChannel(NET_IF_WIDTH), ETH_JUMBO_MAX_FLITS))
     }
     val xbar = Module(new SimpleSwitchCrossbar(n))
 
