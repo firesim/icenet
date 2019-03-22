@@ -69,9 +69,9 @@ trait IceNicControllerModule extends HasRegMap {
   }
 
   cover(!sendReqQueue.io.enq.ready, "NIC_SEND_CTRL_QUEUE_FULL", "NIC is blocked because of lack of space in the control queue")
-  cover(everSent && !sendReqQueue.io.deq.valid, "NIC_SEND_CTRL_QUEUE_EMPTY", "NIC is not working because the control queue is empty")
+  //cover(everSent && !sendReqQueue.io.deq.valid, "NIC_SEND_CTRL_QUEUE_EMPTY", "NIC is not working because the control queue is empty")
   cover(recvCompQueue.io.deq.valid, "NIC_RECV_COMP_OCCUPIED", "NIC receive completion not processed")
-  cover(sendCompCount > 0.U, "NIC_SEND_COMP_OCCUPIED", "NIC send completion not processed")
+  //cover(sendCompCount > 0.U, "NIC_SEND_COMP_OCCUPIED", "NIC send completion not processed")
 
   when (sendReqQueue.io.enq.fire() || sendReqQueue.io.deq.fire()) {
      printf(midas.targetutils.SynthesizePrintf("[NIC] Send Request Queue count %d\n", sendReqCount))
@@ -261,11 +261,14 @@ class IceNicReaderModule(outer: IceNicReader)
   cover((state === s_read) && !io.alloc.ready && tl.a.ready, "NIC_SEND_BUF_FULL", "nic send blocked by full buffer")
   cover(tl.a.valid && !tl.a.ready , "NIC_SEND_MEM_BUSY", "nic send blocked by memory bandwidth")
 
+  val cycle = RegInit(0.U(64.W))
+  cycle := cycle + 1.U
+
   when (io.send.req.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Start sending packet\n"))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Start sending packet %d\n", cycle))
   }
   when (io.send.comp.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Stop sending packet\n"))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Stop sending packet %d\n", cycle))
   }
 
   val outLeftKeep = xactLeftKeep(tl.d.bits.source)
