@@ -19,7 +19,8 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 10,
+  nSendQueues: Int = 1)
 
 case object NICKey extends Field[NICConfig]
 
@@ -34,7 +35,10 @@ class IceNicRecvIO extends Bundle {
 }
 
 trait IceNicControllerBundle extends Bundle {
-  val send = new IceNicSendIO
+  implicit val p: Parameters
+  val nSendQueues = p(NICKey).nSendQueues
+
+  val send = Vec(nSendQueues, new IceNicSendIO)
   val recv = new IceNicRecvIO
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
@@ -43,57 +47,89 @@ trait IceNicControllerModule extends HasRegMap {
   implicit val p: Parameters
   val io: IceNicControllerBundle
 
-  val sendCompDown = Wire(init = false.B)
-
   val qDepth = p(NICKey).ctrlQueueDepth
+  val nSendQueues = p(NICKey).nSendQueues
   require(qDepth < (1 << 8))
 
   def queueCount[T <: Data](qio: QueueIO[T], depth: Int): UInt =
     TwoWayCounter(qio.enq.fire(), qio.deq.fire(), depth)
 
   // hold (len, addr) of packets that we need to send out
-  val sendReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
-  val sendReqCount = queueCount(sendReqQueue.io, qDepth)
+  val sendReqQueues = Seq.fill(nSendQueues) { 
+    Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
+  }
+  val sendReqCount = sendReqQueues.map(q => queueCount(q.io, qDepth))
+  val sendReqSpace = sendReqCount.map(qDepth.U - _)
+  // count number of sends completed
+  val sendCompDown = WireInit(VecInit(Seq.fill(nSendQueues)(false.B)))
+  val sendCompCount = (io.send zip sendCompDown).map {
+    case (send, down) =>
+      TwoWayCounter(send.comp.fire(), down, qDepth)
+  }
+  val sendCompValid = sendCompCount.map(_ > 0.U)
+
   // hold addr of buffers we can write received packets into
   val recvReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
   val recvReqCount = queueCount(recvReqQueue.io, qDepth)
-  // count number of sends completed
-  val sendCompCount = TwoWayCounter(io.send.comp.fire(), sendCompDown, qDepth)
+  val recvReqSpace = (qDepth.U - recvReqCount)
   // hold length of received packets
   val recvCompQueue = Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
   val recvCompCount = queueCount(recvCompQueue.io, qDepth)
 
-  val sendCompValid = sendCompCount > 0.U
-  val intMask = RegInit(0.U(2.W))
+  val nInterrupts = 1 + nSendQueues
+  val intMask = RegInit(0.U(nInterrupts.W))
 
-  io.send.req <> sendReqQueue.io.deq
+  (io.send, sendReqQueues, sendCompCount).zipped.map {
+    case (send, reqq, ccount) =>
+      send.req <> reqq.io.deq
+      send.comp.ready := ccount < qDepth.U
+  }
   io.recv.req <> recvReqQueue.io.deq
-  io.send.comp.ready := sendCompCount < qDepth.U
   recvCompQueue.io.enq <> io.recv.comp
 
-  interrupts(0) := sendCompValid && intMask(0)
-  interrupts(1) := recvCompQueue.io.deq.valid && intMask(1)
-
-  val sendReqSpace = (qDepth.U - sendReqCount)
-  val recvReqSpace = (qDepth.U - recvReqCount)
-
-  def sendCompRead = (ready: Bool) => {
-    sendCompDown := sendCompValid && ready
-    (sendCompValid, true.B)
+  interrupts(0) := recvCompQueue.io.deq.valid && intMask(0)
+  for (i <- 0 until nSendQueues) {
+    interrupts(i + 1) := sendCompValid(i) && intMask(i + 1)
   }
 
-  regmap(
-    0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
-    0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
-    0x10 -> Seq(RegField.r(1, sendCompRead)),
-    0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
-    0x14 -> Seq(
-      RegField.r(8, sendReqSpace),
-      RegField.r(8, recvReqSpace),
-      RegField.r(8, sendCompCount),
-      RegField.r(8, recvCompCount)),
-    0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
-    0x20 -> Seq(RegField(2, intMask)))
+  def sendCompRead(idx: Int) = (ready: Bool) => {
+    sendCompDown(idx) := sendCompValid(idx) && ready
+    (sendCompValid(idx), true.B)
+  }
+
+  val baseMappings = Seq(
+    0x00 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
+    0x08 -> Seq(RegField(nInterrupts, intMask)),
+    0x10 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
+    0x18 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
+    0x1A -> Seq(RegField.r(8, recvReqSpace)),
+    0x1B -> Seq(RegField.r(8, recvCompCount)))
+
+  val sendMappings = Seq.tabulate(nSendQueues) { i =>
+    val base = 0x20 + i * 0x10
+    Seq(
+      (base + 0x00) -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueues(i).io.enq)),
+      (base + 0x08) -> Seq(RegField.r(1, sendCompRead(i))),
+      (base + 0x0A) -> Seq(RegField.r(8, sendReqSpace(i))),
+      (base + 0x0B) -> Seq(RegField.r(8, sendCompCount(i))))
+  }
+
+  val fullMappings = baseMappings ++ sendMappings.flatten
+
+  regmap(fullMappings:_*)
+
+  //regmap(
+  //  0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
+  //  0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
+  //  0x10 -> Seq(RegField.r(1, sendCompRead)),
+  //  0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
+  //  0x14 -> Seq(
+  //    RegField.r(8, sendReqSpace),
+  //    RegField.r(8, recvReqSpace),
+  //    RegField.r(8, sendCompCount),
+  //    RegField.r(8, recvCompCount)),
+  //  0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
+  //  0x20 -> Seq(RegField(2, intMask)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -104,46 +140,52 @@ case class IceNicControllerParams(address: BigInt, beatBytes: Int)
 class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
   extends TLRegisterRouter(
     c.address, "ice-nic", Seq("ucbbar,ice-nic"),
-    interrupts = 2, beatBytes = c.beatBytes)(
+    interrupts = 1 + p(NICKey).nSendQueues, beatBytes = c.beatBytes)(
       new TLRegBundle(c, _)    with IceNicControllerBundle)(
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
 class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     extends LazyModule {
-  val reader = LazyModule(new IceNicReader)
-  val node = TLIdentityNode()
-  node := reader.node
 
   val config = p(NICKey)
+  val nSendQueues = config.nSendQueues
+  val nMemXacts = config.nMemXacts
+  val outBufFlits = config.outBufFlits
+
+  val readers = Seq.fill(nSendQueues) { LazyModule(new IceNicReader) }
+  val node = TLIdentityNode()
+
+  readers.foreach(node := _.node)
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
-      val send = Flipped(new IceNicSendIO)
+      val send = Flipped(Vec(nSendQueues, new IceNicSendIO))
       val tap = (nInputTaps > 0).option(
         Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
       val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
       val rlimit = Input(new RateLimiterSettings)
     })
 
-    reader.module.io.send <> io.send
+    val readouts = (readers zip io.send).map { case (reader, send) =>
+      reader.module.io.send <> send
 
-    val queue = Module(new ReservationBuffer(config.nMemXacts, config.outBufFlits))
-    queue.io.alloc <> reader.module.io.alloc
-    queue.io.in <> reader.module.io.out
+      val queue = Module(new ReservationBuffer(nMemXacts, outBufFlits))
+      queue.io.alloc <> reader.module.io.alloc
+      queue.io.in <> reader.module.io.out
 
-    val aligner = Module(new Aligner)
-    aligner.io.in <> queue.io.out
+      val aligner = Module(new Aligner)
+      aligner.io.in <> queue.io.out
 
-    val unlimitedOut = if (nInputTaps > 0) {
-      val arb = Module(new HellaPeekingArbiter(
-        new StreamChannel(NET_IF_WIDTH), 1 + nInputTaps,
-        (chan: StreamChannel) => chan.last, rr = true))
-      arb.io.in <> (aligner.io.out +: io.tap.get)
-      arb.io.out
-    } else { aligner.io.out }
+      aligner.io.out
+    }
+
+    val arb = Module(new HellaPeekingArbiter(
+      new StreamChannel(NET_IF_WIDTH), nSendQueues + nInputTaps,
+      (chan: StreamChannel) => chan.last, rr = true))
+    arb.io.in <> (readouts ++ io.tap.getOrElse(Nil))
 
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
-    limiter.io.in <> unlimitedOut
+    limiter.io.in <> arb.io.out
     limiter.io.settings := io.rlimit
     io.out <> limiter.io.out
   }
@@ -457,8 +499,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
   val intnode = control.intnode
 
   control.node := TLAtomicAutomata() := mmionode
-  dmanode := TLWidthWidget(NET_IF_BYTES) := sendPath.node
-  dmanode := TLWidthWidget(NET_IF_BYTES) := recvPath.node
+  dmanode :=* TLWidthWidget(NET_IF_BYTES) :=* sendPath.node
+  dmanode :=* TLWidthWidget(NET_IF_BYTES) :=* recvPath.node
 
   lazy val module = new LazyModuleImp(this) {
     val config = p(NICKey)
@@ -812,16 +854,16 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
     val sendReqVec = sendReqs.map { case (start, len, part) =>
       Cat(part.B, len.U(15.W), start.U(48.W))
     }
-    val (sendReqIdx, sendReqDone) = Counter(sendPathIO.send.req.fire(), sendReqs.size)
-    val (sendCompIdx, sendCompDone) = Counter(sendPathIO.send.comp.fire(), sendReqs.size)
+    val (sendReqIdx, sendReqDone) = Counter(sendPathIO.send(0).req.fire(), sendReqs.size)
+    val (sendCompIdx, sendCompDone) = Counter(sendPathIO.send(0).comp.fire(), sendReqs.size)
 
     val started = RegInit(false.B)
     val requesting = RegInit(false.B)
     val completing = RegInit(false.B)
 
-    sendPathIO.send.req.valid := requesting
-    sendPathIO.send.req.bits := sendReqVec(sendReqIdx)
-    sendPathIO.send.comp.ready := completing
+    sendPathIO.send(0).req.valid := requesting
+    sendPathIO.send(0).req.bits := sendReqVec(sendReqIdx)
+    sendPathIO.send(0).comp.ready := completing
 
     when (!started && io.start) {
       requesting := true.B
@@ -878,7 +920,7 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
-    sendPath.module.io.send <> sendDriver.module.io.send
+    sendPath.module.io.send(0) <> sendDriver.module.io.send
     recvPath.module.io.recv <> recvDriver.module.io.recv
 
     sendPath.module.io.rlimit.inc := RLIMIT_INC.U
@@ -896,7 +938,7 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
     val cycle_count = Reg(UInt(64.W))
     val recv_count = Reg(UInt(1.W))
 
-    when (count_state === count_start && sendPath.module.io.send.req.fire()) {
+    when (count_state === count_start && sendPath.module.io.send(0).req.fire()) {
       count_state := count_up
       cycle_count := 0.U
       recv_count := 1.U
