@@ -86,7 +86,7 @@ trait IceNicControllerModule extends HasRegMap {
      printf(midas.targetutils.SynthesizePrintf("[NIC] Send Completion Queue count %d at cycle %d\n", sendCompCount, cycle))
   }
   when (recvCompQueue.io.enq.fire() || recvCompQueue.io.deq.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Completion Queue count %d at cycle\n", recvCompCount, cycle))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Completion Queue count %d at cycle %d\n", recvCompCount, cycle))
   }
 
   val sendCompValid = sendCompCount > 0.U
