@@ -68,22 +68,25 @@ trait IceNicControllerModule extends HasRegMap {
       everSent := true.B
   }
 
+  val cycle = RegInit(0.U(64.W))
+  cycle := cycle + 1.U
+
   cover(!sendReqQueue.io.enq.ready, "NIC_SEND_CTRL_QUEUE_FULL", "NIC is blocked because of lack of space in the control queue")
   //cover(everSent && !sendReqQueue.io.deq.valid, "NIC_SEND_CTRL_QUEUE_EMPTY", "NIC is not working because the control queue is empty")
   cover(recvCompQueue.io.deq.valid, "NIC_RECV_COMP_OCCUPIED", "NIC receive completion not processed")
   //cover(sendCompCount > 0.U, "NIC_SEND_COMP_OCCUPIED", "NIC send completion not processed")
 
   when (sendReqQueue.io.enq.fire() || sendReqQueue.io.deq.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Send Request Queue count %d\n", sendReqCount))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Send Request Queue count %d at cycle %d\n", sendReqCount, cycle))
   }
   when (recvReqQueue.io.enq.fire() || recvReqQueue.io.deq.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Request Queue count %d\n", recvReqCount))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Request Queue count %d at cycle %d\n", recvReqCount, cycle))
   }
   when (io.send.comp.fire() || sendCompDown) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Send Completion Queue count %d\n", sendCompCount))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Send Completion Queue count %d at cycle %d\n", sendCompCount, cycle))
   }
   when (recvCompQueue.io.enq.fire() || recvCompQueue.io.deq.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Completion Queue count %d\n", recvCompCount))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Receive Completion Queue count %d at cycle\n", recvCompCount, cycle))
   }
 
   val sendCompValid = sendCompCount > 0.U
@@ -265,10 +268,10 @@ class IceNicReaderModule(outer: IceNicReader)
   cycle := cycle + 1.U
 
   when (io.send.req.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Start sending packet %d\n", cycle))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Start sending packet at cycle %d\n", cycle))
   }
   when (io.send.comp.fire()) {
-     printf(midas.targetutils.SynthesizePrintf("[NIC] Stop sending packet %d\n", cycle))
+     printf(midas.targetutils.SynthesizePrintf("[NIC] Stop sending packet at cycle %d\n", cycle))
   }
 
   val outLeftKeep = xactLeftKeep(tl.d.bits.source)
