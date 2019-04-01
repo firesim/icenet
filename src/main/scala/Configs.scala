@@ -16,6 +16,7 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
       Module(new NetworkTapTest),
       Module(new RateLimiterTest),
       Module(new AlignerTest),
+      Module(new ChecksumTest),
       Module(new IceNicSendTestWrapper()(p)),
       Module(new IceNicRecvTestWrapper()(p)),
       Module(new IceNicTestWrapper()(p)))
