@@ -99,7 +99,7 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.valid := outValidReg
   io.stream.out.bits.data := buffer.io.read.data
   io.stream.out.bits.last := outLastReg
-  io.stream.out.bits.keep := DontCare
+  io.stream.out.bits.keep := ~0.U(wordBytes.W)
   io.stream.in.ready := true.B
   io.header.valid := bufValid(outPhase)
   io.header.bits := headerType.fromBits(Cat(headers(outPhase).reverse))
