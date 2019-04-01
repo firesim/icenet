@@ -19,7 +19,8 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 10,
+  checksumOffload: Boolean = false)
 
 case object NICKey extends Field[NICConfig]
 
@@ -37,6 +38,9 @@ trait IceNicControllerBundle extends Bundle {
   val send = new IceNicSendIO
   val recv = new IceNicRecvIO
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
+  val txcsumReq = Decoupled(new ChecksumRewriteRequest)
+  val rxcsumReq = Decoupled(new ChecksumCalcRequest)
+  val rxcsumRes = Flipped(Decoupled(UInt(16.W)))
 }
 
 trait IceNicControllerModule extends HasRegMap {
@@ -82,6 +86,20 @@ trait IceNicControllerModule extends HasRegMap {
     (sendCompValid, true.B)
   }
 
+  val txcsumReqQueue = Module(new HellaQueue(qDepth)(UInt(49.W)))
+  val rxcsumReqQueue = Module(new HellaQueue(qDepth)(UInt(33.W)))
+  val rxcsumResQueue = Module(new HellaQueue(qDepth)(UInt(16.W)))
+
+  io.txcsumReq.valid := txcsumReqQueue.io.deq.valid
+  io.txcsumReq.bits := txcsumReqQueue.io.deq.bits.asTypeOf(new ChecksumRewriteRequest)
+  txcsumReqQueue.io.deq.ready := io.txcsumReq.ready
+
+  io.rxcsumReq.valid := rxcsumReqQueue.io.deq.valid
+  io.rxcsumReq.bits := rxcsumReqQueue.io.deq.bits.asTypeOf(new ChecksumCalcRequest)
+  rxcsumReqQueue.io.deq.ready := io.rxcsumReq.ready
+
+  rxcsumResQueue.io.enq <> io.rxcsumRes
+
   regmap(
     0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
     0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
@@ -93,7 +111,10 @@ trait IceNicControllerModule extends HasRegMap {
       RegField.r(8, sendCompCount),
       RegField.r(8, recvCompCount)),
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
-    0x20 -> Seq(RegField(2, intMask)))
+    0x20 -> Seq(RegField(2, intMask)),
+    0x28 -> Seq(RegField.w(49, txcsumReqQueue.io.enq)),
+    0x30 -> Seq(RegField.w(33, rxcsumReqQueue.io.enq)),
+    0x38 -> Seq(RegField.r(16, rxcsumResQueue.io.deq)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -123,6 +144,8 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
         Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
       val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
       val rlimit = Input(new RateLimiterSettings)
+      val csum = config.checksumOffload.option(
+        Flipped(Decoupled(new ChecksumRewriteRequest)))
     })
 
     reader.module.io.send <> io.send
@@ -134,13 +157,21 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     val aligner = Module(new Aligner)
     aligner.io.in <> queue.io.out
 
+    val unarbOut = if (config.checksumOffload) {
+      val rewriter = Module(new ChecksumRewrite(
+        NET_IF_WIDTH, ETH_MAX_BYTES / NET_IF_BYTES))
+      rewriter.io.req <> io.csum.get
+      rewriter.io.stream.in <> aligner.io.out
+      rewriter.io.stream.out
+    } else { aligner.io.out }
+
     val unlimitedOut = if (nInputTaps > 0) {
       val arb = Module(new HellaPeekingArbiter(
         new StreamChannel(NET_IF_WIDTH), 1 + nInputTaps,
         (chan: StreamChannel) => chan.last, rr = true))
-      arb.io.in <> (aligner.io.out +: io.tap.get)
+      arb.io.in <> (unarbOut +: io.tap.get)
       arb.io.out
-    } else { aligner.io.out }
+    } else { unarbOut }
 
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
     limiter.io.in <> unlimitedOut
@@ -405,20 +436,33 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
     val tap = outer.tapFuncs.nonEmpty.option(
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
+    val csumReq = config.checksumOffload.option(
+      Flipped(Decoupled(new ChecksumCalcRequest)))
+    val csumRes = config.checksumOffload.option(Decoupled(UInt(16.W)))
   })
 
   val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
   buffer.io.stream.in <> io.in
 
-  val writer = outer.writer.module
-  writer.io.length := buffer.io.length
-  writer.io.recv <> io.recv
-  writer.io.in <> (if (outer.tapFuncs.nonEmpty) {
+  val tapout = if (outer.tapFuncs.nonEmpty) {
     val tap = Module(new NetworkTap(outer.tapFuncs))
     tap.io.inflow <> buffer.io.stream.out
     io.tap.get <> tap.io.tapout
     tap.io.passthru
-  } else { buffer.io.stream.out })
+  } else { buffer.io.stream.out }
+
+  val csumout = (if (config.checksumOffload) {
+    val calc = Module(new ChecksumCalc(NET_IF_WIDTH))
+    calc.io.req <> io.csumReq.get
+    io.csumRes.get <> calc.io.result
+    calc.io.stream.in <> tapout
+    calc.io.stream.out
+  } else { tapout })
+
+  val writer = outer.writer.module
+  writer.io.length := buffer.io.length
+  writer.io.recv <> io.recv
+  writer.io.in <> csumout
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -486,6 +530,17 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     }
     sendPath.module.io.tap.zip(io.tapIn).foreach {
       case (a, b) => a <> b
+    }
+
+    if (config.checksumOffload) {
+      sendPath.module.io.csum.get <> control.module.io.txcsumReq
+      recvPath.module.io.csumReq.get <> control.module.io.rxcsumReq
+      control.module.io.rxcsumRes <> recvPath.module.io.csumRes.get
+    } else {
+      control.module.io.txcsumReq.ready := false.B
+      control.module.io.rxcsumReq.ready := false.B
+      control.module.io.rxcsumRes.valid := false.B
+      control.module.io.rxcsumRes.bits := DontCare
     }
   }
 }
