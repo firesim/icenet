@@ -21,7 +21,8 @@ case class NICConfig(
   maxAcquireBytes: Int = 64,
   ctrlQueueDepth: Int = 10,
   packetMaxBytes: Int = ETH_STANDARD_MAX_BYTES,
-  nSendQueues: Int = 1)
+  nSendQueues: Int = 1,
+  nRecvQueues: Int = 1)
 
 case object NICKey extends Field[NICConfig]
 
@@ -38,9 +39,10 @@ class IceNicRecvIO extends Bundle {
 trait IceNicControllerBundle extends Bundle {
   implicit val p: Parameters
   val nSendQueues = p(NICKey).nSendQueues
+  val nRecvQueues = p(NICKey).nRecvQueues
 
   val send = Vec(nSendQueues, new IceNicSendIO)
-  val recv = new IceNicRecvIO
+  val recv = Vec(nRecvQueues, new IceNicRecvIO)
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
 }
 
@@ -50,6 +52,7 @@ trait IceNicControllerModule extends HasRegMap {
 
   val qDepth = p(NICKey).ctrlQueueDepth
   val nSendQueues = p(NICKey).nSendQueues
+  val nRecvQueues = p(NICKey).nRecvQueues
   require(qDepth < (1 << 8))
 
   def queueCount[T <: Data](qio: QueueIO[T], depth: Int): UInt =
@@ -70,14 +73,18 @@ trait IceNicControllerModule extends HasRegMap {
   val sendCompValid = sendCompCount.map(_ > 0.U)
 
   // hold addr of buffers we can write received packets into
-  val recvReqQueue = Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
-  val recvReqCount = queueCount(recvReqQueue.io, qDepth)
-  val recvReqSpace = (qDepth.U - recvReqCount)
+  val recvReqQueues = Seq.fill(nRecvQueues) {
+    Module(new HellaQueue(qDepth)(UInt(NET_IF_WIDTH.W)))
+  }
+  val recvReqCount = recvReqQueues.map(q => queueCount(q.io, qDepth))
+  val recvReqSpace = recvReqCount.map(qDepth.U - _)
   // hold length of received packets
-  val recvCompQueue = Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
-  val recvCompCount = queueCount(recvCompQueue.io, qDepth)
+  val recvCompQueues = Seq.fill(nRecvQueues) {
+    Module(new HellaQueue(qDepth)(UInt(NET_LEN_BITS.W)))
+  }
+  val recvCompCount = recvCompQueues.map(q => queueCount(q.io, qDepth))
 
-  val nInterrupts = 1 + nSendQueues
+  val nInterrupts = nRecvQueues + nSendQueues
   val intMask = RegInit(0.U(nInterrupts.W))
 
   (io.send, sendReqQueues, sendCompCount).zipped.map {
@@ -85,13 +92,17 @@ trait IceNicControllerModule extends HasRegMap {
       send.req <> reqq.io.deq
       send.comp.ready := ccount < qDepth.U
   }
-  io.recv.req <> recvReqQueue.io.deq
-  recvCompQueue.io.enq <> io.recv.comp
-
-  interrupts(0) := recvCompQueue.io.deq.valid && intMask(0)
-  for (i <- 0 until nSendQueues) {
-    interrupts(i + 1) := sendCompValid(i) && intMask(i + 1)
+  (io.recv, recvReqQueues, recvCompQueues).zipped.map {
+    case (recv, reqq, compq) =>
+      recv.req <> reqq.io.deq
+      compq.io.enq <> recv.comp
   }
+
+  for (i <- 0 until nRecvQueues)
+    interrupts(i) := recvCompQueues(i).io.deq.valid && intMask(i)
+
+  for (i <- 0 until nSendQueues)
+    interrupts(i + nRecvQueues) := sendCompValid(i) && intMask(i + nRecvQueues)
 
   def sendCompRead(idx: Int) = (ready: Bool) => {
     sendCompDown(idx) := sendCompValid(idx) && ready
@@ -100,14 +111,19 @@ trait IceNicControllerModule extends HasRegMap {
 
   val baseMappings = Seq(
     0x00 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
-    0x08 -> Seq(RegField(nInterrupts, intMask)),
-    0x10 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
-    0x18 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
-    0x1A -> Seq(RegField.r(8, recvReqSpace)),
-    0x1B -> Seq(RegField.r(8, recvCompCount)))
+    0x08 -> Seq(RegField(nInterrupts, intMask)))
+
+  val recvMappings = Seq.tabulate(nRecvQueues) { i =>
+    val base = 0x10 + i * 0x10
+    Seq(
+      (base + 0x00) -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueues(i).io.enq)),
+      (base + 0x08) -> Seq(RegField.r(NET_LEN_BITS, recvCompQueues(i).io.deq)),
+      (base + 0x0A) -> Seq(RegField.r(8, recvReqSpace(i))),
+      (base + 0x0B) -> Seq(RegField.r(8, recvCompCount(i))))
+  }
 
   val sendMappings = Seq.tabulate(nSendQueues) { i =>
-    val base = 0x20 + i * 0x10
+    val base = 0x90 + i * 0x10
     Seq(
       (base + 0x00) -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueues(i).io.enq)),
       (base + 0x08) -> Seq(RegField.r(1, sendCompRead(i))),
@@ -115,22 +131,9 @@ trait IceNicControllerModule extends HasRegMap {
       (base + 0x0B) -> Seq(RegField.r(8, sendCompCount(i))))
   }
 
-  val fullMappings = baseMappings ++ sendMappings.flatten
+  val fullMappings = baseMappings ++ recvMappings.flatten ++ sendMappings.flatten
 
   regmap(fullMappings:_*)
-
-  //regmap(
-  //  0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
-  //  0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
-  //  0x10 -> Seq(RegField.r(1, sendCompRead)),
-  //  0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
-  //  0x14 -> Seq(
-  //    RegField.r(8, sendReqSpace),
-  //    RegField.r(8, recvReqSpace),
-  //    RegField.r(8, sendCompCount),
-  //    RegField.r(8, recvCompCount)),
-  //  0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
-  //  0x20 -> Seq(RegField(2, intMask)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -141,7 +144,8 @@ case class IceNicControllerParams(address: BigInt, beatBytes: Int)
 class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
   extends TLRegisterRouter(
     c.address, "ice-nic", Seq("ucbbar,ice-nic"),
-    interrupts = 1 + p(NICKey).nSendQueues, beatBytes = c.beatBytes)(
+    interrupts = p(NICKey).nRecvQueues + p(NICKey).nSendQueues,
+    beatBytes = c.beatBytes)(
       new TLRegBundle(c, _)    with IceNicControllerBundle)(
       new TLRegModule(c, _, _) with IceNicControllerModule)
 
@@ -433,9 +437,12 @@ class IceNicWriterModule(outer: IceNicWriter)
  */
 class IceNicRecvPath(val tapFuncs: Seq[EthernetHeader => Bool] = Nil)
     (implicit p: Parameters) extends LazyModule {
-  val writer = LazyModule(new IceNicWriter)
+  val nRecvQueues = p(NICKey).nRecvQueues
+  val writers = Seq.fill(nRecvQueues) { LazyModule(new IceNicWriter) }
   val node = TLIdentityNode()
-  node := writer.node
+
+  writers.foreach(node := _.node)
+
   lazy val module = new IceNicRecvPathModule(this)
 }
 
@@ -444,7 +451,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val config = p(NICKey)
 
   val io = IO(new Bundle {
-    val recv = Flipped(new IceNicRecvIO)
+    val recv = Vec(config.nRecvQueues, Flipped(new IceNicRecvIO))
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
     val tap = outer.tapFuncs.nonEmpty.option(
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
@@ -455,15 +462,30 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     maxBytes = config.packetMaxBytes))
   buffer.io.stream.in <> io.in
 
-  val writer = outer.writer.module
-  writer.io.length := buffer.io.length
-  writer.io.recv <> io.recv
-  writer.io.in <> (if (outer.tapFuncs.nonEmpty) {
+  val bufout = (if (outer.tapFuncs.nonEmpty) {
     val tap = Module(new NetworkTap(outer.tapFuncs))
     tap.io.inflow <> buffer.io.stream.out
     io.tap.get <> tap.io.tapout
     tap.io.passthru
   } else { buffer.io.stream.out })
+
+
+  if (config.nRecvQueues == 1) {
+    val writer = outer.writers(0).module
+    writer.io.length := buffer.io.length
+    writer.io.recv <> io.recv.head
+    writer.io.in <> bufout
+  } else {
+    val distrib = Module(new PacketDistributor(config.nRecvQueues))
+    distrib.io.in <> bufout
+    distrib.io.inLength := buffer.io.length
+    for (i <- 0 until config.nRecvQueues) {
+      val writer = outer.writers(i).module
+      writer.io.length := distrib.io.outLength(i)
+      writer.io.recv <> io.recv(i)
+      writer.io.in <> distrib.io.out(i)
+    }
+  }
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -948,7 +970,7 @@ class IceNicTest(implicit p: Parameters) extends LazyModule {
     }
     when (count_state === count_up) {
       cycle_count := cycle_count + 1.U
-      when (recvPath.module.io.recv.comp.fire()) {
+      when (recvPath.module.io.recv(0).comp.fire()) {
         recv_count := recv_count - 1.U
         when (recv_count === 0.U) { count_state := count_print }
       }
