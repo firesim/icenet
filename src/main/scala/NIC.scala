@@ -19,7 +19,8 @@ case class NICConfig(
   outBufFlits: Int = 2 * ETH_STANDARD_MAX_FLITS,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
-  ctrlQueueDepth: Int = 10)
+  ctrlQueueDepth: Int = 10,
+  packetMaxBytes: Int = ETH_STANDARD_MAX_BYTES)
 
 case object NICKey extends Field[NICConfig]
 
@@ -407,7 +408,9 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
   })
 
-  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
+  val buffer = Module(new NetworkPacketBuffer(
+    nPackets = config.inBufPackets,
+    maxBytes = config.packetMaxBytes))
   buffer.io.stream.in <> io.in
 
   val writer = outer.writer.module
