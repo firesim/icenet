@@ -17,6 +17,7 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
       Module(new RateLimiterTest),
       Module(new AlignerTest),
       Module(new ChecksumTest),
+      Module(new ChecksumTCPVerify),
       Module(new IceNicSendTestWrapper()(p)),
       Module(new IceNicRecvTestWrapper()(p)),
       Module(new IceNicTestWrapper()(p)))

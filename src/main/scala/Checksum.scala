@@ -101,7 +101,7 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   val nextStartPos = startPos + dataBytes.U
   val baseData = buffer.io.deq.bits.data
   val shiftAmt = Cat((offset - startPos)(byteOffBits-1, 0), 0.U(3.W))
-  val dataMask = ~(~0.U(8.W) << shiftAmt)
+  val dataMask = ~(~0.U(16.W) << shiftAmt)
   val csumShifted = csum << shiftAmt
   val replace = check && (offset >= startPos) && (offset < nextStartPos)
   val outData = Mux(replace, (baseData & dataMask) | csumShifted, baseData)
@@ -199,4 +199,54 @@ class ChecksumTest extends UnitTest {
   assert(!rewriter.io.stream.out.valid ||
     rewriter.io.stream.out.bits.data === expectedVec(outIdx),
     "ChecksumTest: got wrong data")
+}
+
+class ChecksumTCPVerify extends UnitTest {
+  val packetStr = """00 00 00 12 6d 00 00 03 00 12 6d 00 00 02 08 00 45 00 00 3c
+                    |45 9b 40 00 40 06 9c fb ac 10 00 02 ac 10 00 03 c2 a8 14 51
+                    |22 ad 9e d6 00 00 00 00 a0 02 72 10 58 54 00 00 02 04 05 b4
+                    |04 02 08 0a 43 ec e2 58 00 00 00 00 01 03 03 07 00 00 00 00"""
+  val dataBytes = packetStr.stripMargin.replaceAll("\n", " ")
+                           .split(" ").map(BigInt(_, 16))
+  val dataWords = VecInit((0 until dataBytes.length by 8).map(i =>
+      Cat(dataBytes.slice(i, i + 8).map(_.U(8.W)).reverse)))
+
+  val expectStr = """00 00 00 12 6d 00 00 03 00 12 6d 00 00 02 08 00 45 00 00 3c
+                    |45 9b 40 00 40 06 9c fb ac 10 00 02 ac 10 00 03 c2 a8 14 51
+                    |22 ad 9e d6 00 00 00 00 a0 02 72 10 bf 07 00 00 02 04 05 b4
+                    |04 02 08 0a 43 ec e2 58 00 00 00 00 01 03 03 07 00 00 00 00"""
+  val expectBytes = expectStr.stripMargin.replaceAll("\n", " ")
+                             .split(" ").map(BigInt(_, 16))
+  val expectWords = VecInit((0 until expectBytes.length by 8).map(i =>
+      Cat(expectBytes.slice(i, i + 8).map(_.U(8.W)).reverse)))
+
+  val s_start :: s_req :: s_input :: s_output :: s_done :: Nil = Enum(5)
+  val state = RegInit(s_start)
+
+  val rewriter = Module(new ChecksumRewrite(
+    NET_IF_WIDTH, ETH_MAX_BYTES / NET_IF_BYTES))
+
+  val (inIdx, inDone) = Counter(rewriter.io.stream.in.fire(), dataWords.length)
+  val (outIdx, outDone) = Counter(rewriter.io.stream.out.fire(), expectWords.length)
+
+  rewriter.io.req.valid := state === s_req
+  rewriter.io.req.bits.check := true.B
+  rewriter.io.req.bits.start := 36.U
+  rewriter.io.req.bits.offset := 52.U
+  rewriter.io.req.bits.init := 0.U
+  rewriter.io.stream.in.valid := state === s_input
+  rewriter.io.stream.in.bits.data := dataWords(inIdx)
+  rewriter.io.stream.in.bits.keep := NET_FULL_KEEP
+  rewriter.io.stream.in.bits.last := inIdx === (dataWords.length-1).U
+  rewriter.io.stream.out.ready := state === s_output
+  io.finished := state === s_done
+
+  when (state === s_start && io.start) { state := s_req }
+  when (rewriter.io.req.fire()) { state := s_input }
+  when (inDone) { state := s_output }
+  when (outDone) { state := s_done }
+
+  assert(!rewriter.io.stream.out.valid ||
+    rewriter.io.stream.out.bits.data === expectWords(outIdx),
+    "ChecksumTCPVerify: got wrong data")
 }
