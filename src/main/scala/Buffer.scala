@@ -39,15 +39,14 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
 
 class NetworkPacketBuffer[T <: Data](
     nPackets: Int,
-    bufBytesPerPacket: Int = ETH_MAX_BYTES,
-    maxBytes: Int = ETH_MAX_BYTES,
+    bufBytesPerPacket: Int = ETH_STANDARD_MAX_BYTES,
+    maxBytes: Int = ETH_JUMBO_MAX_BYTES,
     headerBytes: Int = ETH_HEAD_BYTES,
-    headerType: T = new EthernetHeader,
     wordBytes: Int = NET_IF_WIDTH / 8) extends Module {
 
-  val bufWordsPerPacket = bufBytesPerPacket / wordBytes
-  val maxWords = maxBytes / wordBytes
-  val headerWords = headerBytes / wordBytes
+  val bufWordsPerPacket = (bufBytesPerPacket - 1) / wordBytes + 1
+  val maxWords = (maxBytes - 1) / wordBytes + 1
+  val headerWords = (headerBytes - 1) / wordBytes + 1
   val wordBits = wordBytes * 8
   val bufWords = bufWordsPerPacket * nPackets
 
@@ -56,7 +55,6 @@ class NetworkPacketBuffer[T <: Data](
 
   val io = IO(new Bundle {
     val stream = new StreamIO(wordBytes * 8)
-    val header = Valid(headerType)
     val length = Output(UInt(idxBits.W))
     val count = Output(UInt(log2Ceil(nPackets+1).W))
   })
@@ -65,7 +63,6 @@ class NetworkPacketBuffer[T <: Data](
     "NetworkPacketBuffer does not handle missing data")
 
   val buffer = Module(new BufferBRAM(bufWords, Bits(wordBits.W)))
-  val headers = Reg(Vec(nPackets, Vec(headerWords, Bits(wordBits.W))))
   val bufLengths = RegInit(VecInit(Seq.fill(nPackets) { 0.U(idxBits.W) }))
   val bufValid = Vec(bufLengths.map(len => len > 0.U))
 
@@ -91,7 +88,6 @@ class NetworkPacketBuffer[T <: Data](
 
   val ren = (io.stream.out.ready || !outValidReg) && bufValid(outPhase) && !bufEmpty
   val wen = Wire(init = false.B)
-  val hwen = wen && inIdx < headerWords.U
 
   val outLastReg = RegEnable(outLast(outPhase), ren)
   val outIdxReg = RegEnable(outIdx, ren)
@@ -101,8 +97,6 @@ class NetworkPacketBuffer[T <: Data](
   io.stream.out.bits.last := outLastReg
   io.stream.out.bits.keep := ~0.U(wordBytes.W)
   io.stream.in.ready := true.B
-  io.header.valid := bufValid(outPhase)
-  io.header.bits := headerType.fromBits(Cat(headers(outPhase).reverse))
   io.length := RegEnable(bufLengths(outPhase), ren) - outIdxReg
   io.count := RegEnable(PopCount(bufValid), ren)
 
@@ -131,8 +125,6 @@ class NetworkPacketBuffer[T <: Data](
       bufLengths(outPhase) := 0.U
     }
   }
-
-  when (hwen) { headers(inPhase)(inIdx) := io.stream.in.bits.data }
 
   when (wen) { bufHead := wrapInc(bufHead, bufWords) }
 
@@ -167,7 +159,7 @@ class NetworkPacketBuffer[T <: Data](
 }
 
 class NetworkPacketBufferTest extends UnitTest(100000) {
-  val buffer = Module(new NetworkPacketBuffer(2, 24, 32, 8, UInt(64.W), 4))
+  val buffer = Module(new NetworkPacketBuffer(2, 24, 32, 8, 4))
 
   val inPackets = Seq(
     (10, false), // drop because too long
@@ -253,8 +245,6 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
   assert(!buffer.io.stream.out.valid || !buffer.io.stream.out.bits.last ||
     outIdx === outPacketLengths(outPhase),
     "NetworkPacketBufferTest: got output packet with wrong length")
-  assert(!buffer.io.header.valid || buffer.io.header.bits === (1L << 32).U,
-    "NetworkPacketBufferTest: unexpected header")
 
   io.finished := state === s_done
 }

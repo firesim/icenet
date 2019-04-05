@@ -16,11 +16,12 @@ import IceNetConsts._
 
 case class NICConfig(
   inBufPackets: Int = 2,
-  outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
+  outBufFlits: Int = 2 * ETH_STANDARD_MAX_FLITS,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
   ctrlQueueDepth: Int = 10,
-  checksumOffload: Boolean = false)
+  checksumOffload: Boolean = false,
+  packetMaxBytes: Int = ETH_STANDARD_MAX_BYTES)
 
 case object NICKey extends Field[NICConfig]
 
@@ -158,8 +159,8 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     aligner.io.in <> queue.io.out
 
     val unarbOut = if (config.checksumOffload) {
-      val rewriter = Module(new ChecksumRewrite(
-        NET_IF_WIDTH, ETH_MAX_BYTES / NET_IF_BYTES))
+      val bufFlits = (config.packetMaxBytes - 1) / NET_IF_BYTES + 1
+      val rewriter = Module(new ChecksumRewrite(NET_IF_WIDTH, bufFlits))
       rewriter.io.req <> io.csum.get
       rewriter.io.stream.in <> aligner.io.out
       rewriter.io.stream.out
@@ -441,7 +442,9 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val csumRes = config.checksumOffload.option(Decoupled(UInt(16.W)))
   })
 
-  val buffer = Module(new NetworkPacketBuffer(config.inBufPackets))
+  val buffer = Module(new NetworkPacketBuffer(
+    nPackets = config.inBufPackets,
+    maxBytes = config.packetMaxBytes))
   buffer.io.stream.in <> io.in
 
   val tapout = if (outer.tapFuncs.nonEmpty) {

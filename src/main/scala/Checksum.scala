@@ -223,8 +223,7 @@ class ChecksumTCPVerify extends UnitTest {
   val s_start :: s_req :: s_input :: s_output :: s_done :: Nil = Enum(5)
   val state = RegInit(s_start)
 
-  val rewriter = Module(new ChecksumRewrite(
-    NET_IF_WIDTH, ETH_MAX_BYTES / NET_IF_BYTES))
+  val rewriter = Module(new ChecksumRewrite(NET_IF_WIDTH, ETH_STANDARD_MAX_FLITS))
 
   val (inIdx, inDone) = Counter(rewriter.io.stream.in.fire(), dataWords.length)
   val (outIdx, outDone) = Counter(rewriter.io.stream.out.fire(), expectWords.length)
