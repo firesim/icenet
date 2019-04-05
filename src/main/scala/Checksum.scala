@@ -3,6 +3,7 @@ package icenet
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
+import freechips.rocketchip.util.DecoupledHelper
 import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 
@@ -90,11 +91,27 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
     val stream = new StreamIO(dataBits)
   })
 
+  val reqq = Module(new Queue(new ChecksumRewriteRequest, 2))
   val calc = Module(new ChecksumCalc(dataBits))
   val buffer = Module(new Queue(new StreamChannel(dataBits), nBufFlits))
   val offset = Reg(UInt(16.W))
   val check  = Reg(Bool())
   val csum = Reg(UInt(16.W))
+
+  val reqHelper = DecoupledHelper(
+    io.req.valid,
+    calc.io.req.ready,
+    reqq.io.enq.ready)
+
+  io.req.ready := reqHelper.fire(io.req.valid)
+  calc.io.req.valid := reqHelper.fire(calc.io.req.ready)
+  calc.io.req.bits.check := io.req.bits.check
+  calc.io.req.bits.start := io.req.bits.start
+  calc.io.req.bits.init := io.req.bits.init
+  reqq.io.enq.valid := reqHelper.fire(reqq.io.enq.ready)
+  reqq.io.enq.bits := io.req.bits
+  calc.io.stream.in <> io.stream.in
+  buffer.io.enq <> calc.io.stream.out
 
   val byteOffBits = log2Ceil(dataBytes)
   val startPos = Reg(UInt(16.W))
@@ -109,11 +126,11 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   val s_req :: s_wait :: s_flush :: Nil = Enum(3)
   val state = RegInit(s_req)
 
-  when (io.req.fire()) {
-    check := io.req.bits.check
-    offset := io.req.bits.offset
+  when (reqq.io.deq.fire()) {
+    check := reqq.io.deq.bits.check
+    offset := reqq.io.deq.bits.offset
     startPos := 0.U
-    state := Mux(io.req.bits.check, s_wait, s_flush)
+    state := Mux(reqq.io.deq.bits.check, s_wait, s_flush)
   }
 
   when (calc.io.result.fire()) {
@@ -128,14 +145,8 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
 
   val deqOK = (state === s_flush || nextStartPos <= offset)
 
-  io.req.ready := state === s_req && calc.io.req.ready
-  calc.io.req.valid := state === s_req && io.req.valid
-  calc.io.req.bits.check := io.req.bits.check
-  calc.io.req.bits.start := io.req.bits.start
-  calc.io.req.bits.init := io.req.bits.init
+  reqq.io.deq.ready := state === s_req
   calc.io.result.ready := state === s_wait
-  calc.io.stream.in <> io.stream.in
-  buffer.io.enq <> calc.io.stream.out
 
   io.stream.out.valid := buffer.io.deq.valid && deqOK
   buffer.io.deq.ready := io.stream.out.ready && deqOK
