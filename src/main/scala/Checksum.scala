@@ -49,6 +49,11 @@ class ChecksumCalc(dataBits: Int) extends Module {
   io.result.valid := state === s_result
   io.result.bits := csum(15, 0)
 
+  cover(io.stream.in.valid && io.stream.out.ready && state =/= s_stream,
+    "CSUM_CALC_NOT_STREAMING", "Checksum calculation blocked b/c not in streaming state")
+  cover(io.stream.in.valid && state === s_stream && !io.stream.out.ready,
+    "CSUM_CALC_OUT_BLOCKED", "Checksum calculation blocked b/c output not ready")
+
   when (io.req.fire()) {
     check := io.req.bits.check
     start := io.req.bits.start
@@ -152,6 +157,9 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   buffer.io.deq.ready := io.stream.out.ready && deqOK
   io.stream.out.bits := buffer.io.deq.bits
   io.stream.out.bits.data := outData
+
+  cover(buffer.io.deq.valid && io.stream.out.ready && !deqOK,
+    "CSUM_REWRITE_OUTPUT_BLOCK", "Checksum rewrite output blocked by incomplete checksum")
 }
 
 class ChecksumTest extends UnitTest {
