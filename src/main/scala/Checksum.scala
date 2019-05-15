@@ -7,6 +7,7 @@ import freechips.rocketchip.util.DecoupledHelper
 import freechips.rocketchip.util.property._
 import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
+import midas.targetutils.SynthesizePrintf
 
 class ChecksumCalcRequest extends Bundle {
   val check  = Bool()
@@ -30,6 +31,9 @@ class ChecksumCalc(dataBits: Int) extends Module {
     val result = Decoupled(UInt(16.W))
   })
 
+  val cycle = RegInit(0.U(64.W))
+  cycle := cycle + 1.U
+
   val csum = Reg(UInt((dataBits + 16).W))
   val check = Reg(Bool())
   val start  = Reg(UInt(16.W))
@@ -50,6 +54,8 @@ class ChecksumCalc(dataBits: Int) extends Module {
   io.result.valid := state === s_result
   io.result.bits := csum(15, 0)
 
+  cover(io.req.valid && !io.req.ready,
+    "CSUM_CALC_NOT_READY", "Checksum calc not ready to receive request")
   cover(io.stream.in.valid && io.stream.out.ready && state =/= s_stream,
     "CSUM_CALC_NOT_STREAMING", "Checksum calculation blocked b/c not in streaming state")
   cover(io.stream.in.valid && state === s_stream && !io.stream.out.ready,
@@ -61,6 +67,8 @@ class ChecksumCalc(dataBits: Int) extends Module {
     csum := io.req.bits.init
     startPos := 0.U
     state := s_stream
+
+    printf(SynthesizePrintf("[CSUM] start calculation @ %d\n", cycle));
   }
 
   when (io.stream.in.fire()) {
@@ -70,6 +78,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
     }
 
     when (io.stream.in.bits.last) {
+      printf(SynthesizePrintf("[CSUM] finish stream @ %d\n", cycle));
       state := Mux(check, s_fold, s_req)
     }
   }
@@ -96,6 +105,9 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
     val req = Flipped(Decoupled(new ChecksumRewriteRequest))
     val stream = new StreamIO(dataBits)
   })
+
+  val cycle = RegInit(0.U(64.W))
+  cycle := cycle + 1.U
 
   val reqq = Module(new Queue(new ChecksumRewriteRequest, 2))
   val calc = Module(new ChecksumCalc(dataBits))
@@ -133,6 +145,7 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   val state = RegInit(s_req)
 
   when (reqq.io.deq.fire()) {
+    printf(SynthesizePrintf("[CSUM] start rewrite @ %d\n", cycle));
     check := reqq.io.deq.bits.check
     offset := reqq.io.deq.bits.offset
     startPos := 0.U
@@ -140,13 +153,17 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   }
 
   when (calc.io.result.fire()) {
+    printf(SynthesizePrintf("[CSUM] got checksum result @ %d\n", cycle));
     csum := calc.io.result.bits
     state := s_flush
   }
 
   when (io.stream.out.fire()) {
     startPos := nextStartPos
-    when (io.stream.out.bits.last) { state := s_req }
+    when (io.stream.out.bits.last) {
+      printf(SynthesizePrintf("[CSUM] finish sending rewrite @ %d\n", cycle));
+      state := s_req
+    }
   }
 
   val deqOK = (state === s_flush || nextStartPos <= offset)
@@ -158,6 +175,9 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   buffer.io.deq.ready := io.stream.out.ready && deqOK
   io.stream.out.bits := buffer.io.deq.bits
   io.stream.out.bits.data := outData
+
+  cover(reqq.io.enq.valid && !reqq.io.enq.ready,
+    "CSUM_REWRITE_REQQ_FULL", "Checksum rewrite request queue is full")
 
   cover(buffer.io.deq.valid && io.stream.out.ready && !deqOK,
     "CSUM_REWRITE_OUTPUT_BLOCK", "Checksum rewrite output blocked by incomplete checksum")
