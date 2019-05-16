@@ -186,7 +186,7 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
 
     val unarbOut = if (config.checksumOffload) {
       val bufFlits = (config.packetMaxBytes - 1) / NET_IF_BYTES + 1
-      val rewriter = Module(new ChecksumRewrite(NET_IF_WIDTH, bufFlits))
+      val rewriter = Module(new ChecksumRewrite("send", NET_IF_WIDTH, bufFlits))
       rewriter.io.req <> io.csum.get
       rewriter.io.stream.in <> aligner.io.out
       rewriter.io.stream.out
@@ -502,7 +502,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   } else { buffer.io.stream.out }
 
   val csumout = (if (config.checksumOffload) {
-    val calc = Module(new ChecksumCalc(NET_IF_WIDTH))
+    val calc = Module(new ChecksumCalc("recv", NET_IF_WIDTH))
     calc.io.req <> io.csumReq.get
     io.csumRes.get <> calc.io.result
     calc.io.stream.in <> tapout

@@ -22,7 +22,7 @@ class ChecksumRewriteRequest extends Bundle {
   val init   = UInt(16.W)
 }
 
-class ChecksumCalc(dataBits: Int) extends Module {
+class ChecksumCalc(name: String, dataBits: Int) extends Module {
   val dataBytes = dataBits / 8
 
   val io = IO(new Bundle {
@@ -54,12 +54,12 @@ class ChecksumCalc(dataBits: Int) extends Module {
   io.result.valid := state === s_result
   io.result.bits := csum(15, 0)
 
-  cover(io.req.valid && !io.req.ready,
-    "CSUM_CALC_NOT_READY", "Checksum calc not ready to receive request")
-  cover(io.stream.in.valid && io.stream.out.ready && state =/= s_stream,
-    "CSUM_CALC_NOT_STREAMING", "Checksum calculation blocked b/c not in streaming state")
-  cover(io.stream.in.valid && state === s_stream && !io.stream.out.ready,
-    "CSUM_CALC_OUT_BLOCKED", "Checksum calculation blocked b/c output not ready")
+  //cover(io.req.valid && !io.req.ready,
+  //  "CSUM_CALC_NOT_READY", "Checksum calc not ready to receive request")
+  //cover(io.stream.in.valid && io.stream.out.ready && state =/= s_stream,
+  //  "CSUM_CALC_NOT_STREAMING", "Checksum calculation blocked b/c not in streaming state")
+  //cover(io.stream.in.valid && state === s_stream && !io.stream.out.ready,
+  //  "CSUM_CALC_OUT_BLOCKED", "Checksum calculation blocked b/c output not ready")
 
   when (io.req.fire()) {
     check := io.req.bits.check
@@ -68,7 +68,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
     startPos := 0.U
     state := s_stream
 
-    printf(SynthesizePrintf("[CSUM] start calculation @ %d\n", cycle));
+    printf(SynthesizePrintf(s"[CSUM $name] start calculation @ %d\n", cycle));
   }
 
   when (io.stream.in.fire()) {
@@ -78,7 +78,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
     }
 
     when (io.stream.in.bits.last) {
-      printf(SynthesizePrintf("[CSUM] finish stream @ %d\n", cycle));
+      printf(SynthesizePrintf(s"[CSUM $name] finish stream @ %d\n", cycle));
       state := Mux(check, s_fold, s_req)
     }
   }
@@ -98,7 +98,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
   when (io.result.fire()) { state := s_req }
 }
 
-class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
+class ChecksumRewrite(name: String, dataBits: Int, nBufFlits: Int) extends Module {
   val dataBytes = dataBits / 8
 
   val io = IO(new Bundle {
@@ -110,7 +110,7 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   cycle := cycle + 1.U
 
   val reqq = Module(new Queue(new ChecksumRewriteRequest, 2))
-  val calc = Module(new ChecksumCalc(dataBits))
+  val calc = Module(new ChecksumCalc(name, dataBits))
   val buffer = Module(new Queue(new StreamChannel(dataBits), nBufFlits))
   val offset = Reg(UInt(16.W))
   val check  = Reg(Bool())
@@ -145,7 +145,7 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   val state = RegInit(s_req)
 
   when (reqq.io.deq.fire()) {
-    printf(SynthesizePrintf("[CSUM] start rewrite @ %d\n", cycle));
+    printf(SynthesizePrintf(s"[CSUM $name] start rewrite @ %d\n", cycle));
     check := reqq.io.deq.bits.check
     offset := reqq.io.deq.bits.offset
     startPos := 0.U
@@ -153,7 +153,7 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   }
 
   when (calc.io.result.fire()) {
-    printf(SynthesizePrintf("[CSUM] got checksum result @ %d\n", cycle));
+    printf(SynthesizePrintf(s"[CSUM $name] got checksum result @ %d\n", cycle));
     csum := calc.io.result.bits
     state := s_flush
   }
@@ -161,7 +161,7 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   when (io.stream.out.fire()) {
     startPos := nextStartPos
     when (io.stream.out.bits.last) {
-      printf(SynthesizePrintf("[CSUM] finish sending rewrite @ %d\n", cycle));
+      printf(SynthesizePrintf(s"[CSUM $name] finish sending rewrite @ %d\n", cycle));
       state := s_req
     }
   }
@@ -176,11 +176,11 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   io.stream.out.bits := buffer.io.deq.bits
   io.stream.out.bits.data := outData
 
-  cover(reqq.io.enq.valid && !reqq.io.enq.ready,
-    "CSUM_REWRITE_REQQ_FULL", "Checksum rewrite request queue is full")
+  //cover(reqq.io.enq.valid && !reqq.io.enq.ready,
+  //  "CSUM_REWRITE_REQQ_FULL", "Checksum rewrite request queue is full")
 
-  cover(buffer.io.deq.valid && io.stream.out.ready && !deqOK,
-    "CSUM_REWRITE_OUTPUT_BLOCK", "Checksum rewrite output blocked by incomplete checksum")
+  //cover(buffer.io.deq.valid && io.stream.out.ready && !deqOK,
+  //  "CSUM_REWRITE_OUTPUT_BLOCK", "Checksum rewrite output blocked by incomplete checksum")
 }
 
 class ChecksumTest extends UnitTest {
@@ -214,7 +214,7 @@ class ChecksumTest extends UnitTest {
   val state = RegInit(s_start)
 
   val rewriter = Module(new ChecksumRewrite(
-    dataBits, data.length/shortsPerFlit))
+    "csumTest", dataBits, data.length/shortsPerFlit))
 
   val (inIdx, inDone) = Counter(rewriter.io.stream.in.fire(), dataVec.length)
   val (outIdx, outDone) = Counter(rewriter.io.stream.out.fire(), expectedVec.length)
@@ -263,7 +263,7 @@ class ChecksumTCPVerify extends UnitTest {
   val s_start :: s_req :: s_input :: s_output :: s_done :: Nil = Enum(5)
   val state = RegInit(s_start)
 
-  val rewriter = Module(new ChecksumRewrite(NET_IF_WIDTH, ETH_STANDARD_MAX_FLITS))
+  val rewriter = Module(new ChecksumRewrite("tcpVerify", NET_IF_WIDTH, ETH_STANDARD_MAX_FLITS))
 
   val (inIdx, inDone) = Counter(rewriter.io.stream.in.fire(), dataWords.length)
   val (outIdx, outDone) = Counter(rewriter.io.stream.out.fire(), expectWords.length)
