@@ -10,6 +10,7 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
   case UnitTests => (p: Parameters) => {
     Seq(
       Module(new NetworkPacketBufferTest),
+      Module(new PauserTest),
       Module(new NetworkTapTest),
       Module(new RateLimiterTest),
       Module(new AlignerTest),
@@ -17,7 +18,8 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
       Module(new ChecksumTCPVerify),
       Module(new IceNicSendTestWrapper()(p)),
       Module(new IceNicRecvTestWrapper()(p)),
-      Module(new IceNicTestWrapper()(p)))
+      Module(new IceNicTestWrapper()(p)),
+      Module(new MisalignedTestWrapper()(p)))
   }
 })
 
