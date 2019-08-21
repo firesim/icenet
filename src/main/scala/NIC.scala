@@ -330,9 +330,9 @@ trait HasPeripheryIceNIC  { this: BaseSubsystem =>
   private val address = BigInt(0x10016000)
   private val portName = "Ice-NIC"
 
-  val icenic = LazyModule(new IceNIC(address, sbus.beatBytes))
-  sbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
-  sbus.fromPort(Some(portName))() :=* icenic.dmanode
+  val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
+  pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
+  fbus.fromPort(Some(portName))() :=* icenic.dmanode
   ibus.fromSync := icenic.intnode
 }
 
