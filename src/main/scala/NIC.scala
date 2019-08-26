@@ -229,7 +229,6 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   io.buf_free := buffer.io.free
 
   val writer = outer.writer.module
-  writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
   writer.io.in <> (if (outer.tapFuncs.nonEmpty) {
     val tap = Module(new NetworkTap(outer.tapFuncs))
@@ -237,6 +236,8 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     io.tap.get <> tap.io.tapout
     tap.io.passthru
   } else { buffer.io.stream.out })
+  writer.io.length.valid := buffer.io.length.valid && writer.io.in.valid
+  writer.io.length.bits  := buffer.io.length.bits
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
