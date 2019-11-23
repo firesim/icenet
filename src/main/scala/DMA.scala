@@ -6,6 +6,7 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp, IdRange}
 import freechips.rocketchip.util.DecoupledHelper
 import testchipip.{StreamChannel, TLHelper}
+import freechips.rocketchip.util.property._
 
 class StreamReadRequest extends Bundle {
   val address = UInt(48.W)
@@ -109,6 +110,20 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
       fromSource = xactId,
       toAddress = sendaddr,
       lgSize = reqSize)._2
+
+    cover((state === s_read) && xactBusy.andR && tl.a.ready, "NIC_SEND_XACT_ALL_BUSY", "nic send blocked by lack of transactions")
+    cover((state === s_read) && !io.alloc.ready && tl.a.ready, "NIC_SEND_BUF_FULL", "nic send blocked by full buffer")
+    cover(tl.a.valid && !tl.a.ready , "NIC_SEND_MEM_BUSY", "nic send blocked by memory bandwidth")
+  
+    val cycle = RegInit(0.U(64.W))
+    cycle := cycle + 1.U
+  
+    when (io.req.fire()) {
+       printf(midas.targetutils.SynthesizePrintf("[NIC] Start sending packet at cycle %d\n", cycle))
+    }
+    when (io.resp.fire()) {
+       printf(midas.targetutils.SynthesizePrintf("[NIC] Stop sending packet at cycle %d\n", cycle))
+    }
 
     val outLeftKeep = xactLeftKeep(tl.d.bits.source)
     val outRightKeep = xactRightKeep(tl.d.bits.source)
@@ -220,6 +235,12 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
 
     val newBlock = beatsLeft === 0.U
     val canSend = !xactBusy.andR || !newBlock
+
+    cover((state === s_data && io.in.valid) && !canSend && tl.a.ready , "NIC_RECV_XACT_ALL_BUSY", "nic receive blocked by lack of transactions")
+    cover(tl.a.valid && !tl.a.ready , "NIC_RECV_MEM_BUSY", "nic receive blocked by memory bandwidth")
+
+    //cover(!io.req.valid && io.req.ready, "NIC_NO_AVAIL_RECEIVE_FRAMES", "NIC receiving is blocked by lack of receive frames in the control queue")
+    cover(io.in.valid && state =/= s_data, "NIC_NO_AVAIL_RECEIVE_FRAMES", "NIC receiving is blocked by lack of receive frames in the control queue")
 
     val reqSize = MuxCase(0.U,
       (log2Ceil(maxBytes) until 0 by -1).map(lgSize =>
