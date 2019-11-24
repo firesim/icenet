@@ -22,10 +22,13 @@ class Aligner(dataBits: Int) extends Module {
   val rshift = PriorityEncoder(io.in.bits.keep)
   val full_keep = ((io.in.bits.keep >> rshift) << nbytes) | keep
 
+  val in_mask = FillInterleaved(8, io.in.bits.keep)
+  val in_data = io.in.bits.data & in_mask
+
   val rshift_bit = Cat(rshift, 0.U(3.W))
   val nbits = Cat(nbytes, 0.U(3.W))
   val bitmask = FillInterleaved(8, keep)
-  val full_data = ((io.in.bits.data >> rshift_bit) << nbits) | (data & bitmask)
+  val full_data = ((in_data >> rshift_bit) << nbits) | (data & bitmask)
   val full_nbytes = PopCount(full_keep)
   val fwd_last = io.in.bits.last && (full_keep >> dataBytes.U) === 0.U
 

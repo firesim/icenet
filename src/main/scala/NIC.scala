@@ -457,7 +457,6 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
   private val packetQuanta = (nicConf.packetMaxBytes * 8) / BT_PER_QUANTA
 
   def connectNicLoopback(qDepth: Int = 4 * packetWords, latency: Int = 10) {
-
     net.macAddr := PlusArg("macaddr")
     net.rlimit.inc := PlusArg("rlimit-inc", 1)
     net.rlimit.period := PlusArg("rlimit-period", 1)
@@ -475,6 +474,7 @@ trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
     } else {
       net.in <> Queue(LatencyPipe(net.out, latency), qDepth)
     }
+    net.in.bits.keep := NET_FULL_KEEP
   }
 
   def connectSimNetwork(clock: Clock, reset: Bool) {

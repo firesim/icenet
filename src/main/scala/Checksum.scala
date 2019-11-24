@@ -160,8 +160,11 @@ class ChecksumTest extends UnitTest {
   val init = 0x4315
   val start = 2
   val data = Seq(0xdead, 0xbeef, 0x7432, 0x0000, 0xf00d, 0x3163, 0x9821, 0x1543)
+  val take = Seq(true,   true,   true,   true,   true,   true,   true,   false)
+  val keep = take.map(if (_) 0x3 else 0x0)
 
-  var csum = init + data.drop(start/2).reduce(_ + _)
+  var csum = init + data.zip(take).drop(start/2)
+                        .filter(_._2).map(_._1).reduce(_ + _)
   while (csum > 0xffff) {
     csum = (csum >> 16) + (csum & 0xffff)
   }
@@ -170,17 +173,18 @@ class ChecksumTest extends UnitTest {
   val expected = data.take(offset/2) ++
     Seq(csum) ++ data.drop(offset/2+1)
 
-  def seqToVec(seq: Seq[Int], step: Int) = {
+  def seqToVec(seq: Seq[Int], step: Int, nbits: Int) = {
     VecInit((0 until seq.length by step).map { i =>
-      Cat((i until (i + step)).map(seq(_).U(16.W)).reverse)
+      Cat((i until (i + step)).map(seq(_).U(nbits.W)).reverse)
     })
   }
 
   val dataBits = 32
   val dataBytes = dataBits / 8
   val shortsPerFlit = dataBits / 16
-  val dataVec = seqToVec(data, shortsPerFlit)
-  val expectedVec = seqToVec(expected, shortsPerFlit)
+  val dataVec = seqToVec(data, shortsPerFlit, 16)
+  val expectedVec = seqToVec(expected, shortsPerFlit, 16)
+  val keepVec = seqToVec(keep, shortsPerFlit, 2)
 
   val s_start :: s_req :: s_input :: s_output :: s_done :: Nil = Enum(5)
   val state = RegInit(s_start)
@@ -198,7 +202,7 @@ class ChecksumTest extends UnitTest {
   rewriter.io.req.bits.offset := offset.U
   rewriter.io.stream.in.valid := state === s_input
   rewriter.io.stream.in.bits.data := dataVec(inIdx)
-  rewriter.io.stream.in.bits.keep := ~0.U(dataBytes.W)
+  rewriter.io.stream.in.bits.keep := keepVec(inIdx)
   rewriter.io.stream.in.bits.last := inIdx === (dataVec.length-1).U
   rewriter.io.stream.out.ready := state === s_output
   io.finished := state === s_done
@@ -211,6 +215,10 @@ class ChecksumTest extends UnitTest {
   assert(!rewriter.io.stream.out.valid ||
     rewriter.io.stream.out.bits.data === expectedVec(outIdx),
     "ChecksumTest: got wrong data")
+
+  assert(!rewriter.io.stream.out.valid ||
+    rewriter.io.stream.out.bits.keep === keepVec(outIdx),
+    "ChecksumTest: got wrong keep")
 }
 
 class TCPChecksumOffloadResult extends Bundle {
