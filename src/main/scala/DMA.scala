@@ -7,6 +7,8 @@ import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp, IdRange}
 import freechips.rocketchip.util.DecoupledHelper
 import testchipip.{StreamChannel, TLHelper}
 
+import midas.targetutils.SynthesizePrintf
+
 class StreamReadRequest extends Bundle {
   val address = UInt(48.W)
   val length = UInt(15.W)
@@ -286,6 +288,13 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
       overhang := fulldata >> dataBits.U
 
       when (bytesSent === bytesToSend) { state := s_resp }
+
+      printf(SynthesizePrintf(
+        "address %x, size %d, data %x, mask %x\n",
+        tl.a.bits.address,
+        tl.a.bits.size,
+        tl.a.bits.data,
+        tl.a.bits.mask))
     }
 
     when (io.resp.fire()) { state := s_idle }
