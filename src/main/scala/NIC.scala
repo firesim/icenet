@@ -303,9 +303,10 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   } else { tapout })
 
   val writer = outer.writer.module
-  writer.io.length := buffer.io.length
   writer.io.recv <> io.recv
   writer.io.in <> csumout
+  writer.io.length.valid := buffer.io.length.valid && writer.io.in.valid
+  writer.io.length.bits  := buffer.io.length.bits
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -410,9 +411,9 @@ trait HasPeripheryIceNIC  { this: BaseSubsystem =>
   private val address = BigInt(0x10016000)
   private val portName = "Ice-NIC"
 
-  val icenic = LazyModule(new IceNIC(address, sbus.beatBytes))
-  sbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
-  sbus.fromPort(Some(portName))() :=* icenic.dmanode
+  val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
+  pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
+  fbus.fromPort(Some(portName))() :=* icenic.dmanode
   ibus.fromSync := icenic.intnode
 }
 
