@@ -22,15 +22,15 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
     }
   })
 
-  val ram = Mem(n, typ)
+  val ram = Mem(n, UInt(typ.getWidth.W))
 
   val wen = RegNext(io.write.en, false.B)
   val waddr = RegNext(io.write.addr)
   val wdata = RegNext(io.write.data)
 
-  when (wen) { ram.write(waddr, wdata) }
+  when (wen) { ram.write(waddr, wdata.asUInt) }
 
-  val rread_data = RegEnable(ram.read(io.read.addr), io.read.en)
+  val rread_data = RegEnable(ram.read(io.read.addr).asTypeOf(typ), io.read.en)
   val rbypass = RegEnable(io.read.addr === waddr && wen, io.read.en)
   val rbypass_data = RegEnable(wdata, io.read.en)
 
