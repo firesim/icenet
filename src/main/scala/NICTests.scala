@@ -191,7 +191,7 @@ class IceNicRecvTest(implicit p: Parameters) extends NICLazyModule {
   val recvData = testData.take(183) ++ testData.drop(273)
 
   val nicParams = p.alterPartial({
-    case NICKey => p(NICKey).copy(inBufFlits = 200)
+    case NICKey => Some(p(NICKey).get.copy(inBufFlits = 200))
   })
   val recvDriver = LazyModule(new IceNicTestRecvDriver(recvReqs, recvData))
   val recvPath = LazyModule(new IceNicRecvPath()(nicParams))
