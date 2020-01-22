@@ -21,11 +21,11 @@ case class NICConfig(
   checksumOffload: Boolean = false,
   packetMaxBytes: Int = ETH_STANDARD_MAX_BYTES)
 
-case object NICKey extends Field[NICConfig]
+case object NICKey extends Field[Option[NICConfig]](None)
 
 trait HasNICParameters {
   implicit val p: Parameters
-  val nicExternal = p(NICKey)
+  val nicExternal = p(NICKey).get
   val inBufFlits = nicExternal.inBufFlits
   val outBufFlits = nicExternal.outBufFlits
   val nMemXacts = nicExternal.nMemXacts
@@ -407,54 +407,62 @@ class SimNetwork extends BlackBox {
   })
 }
 
-trait HasPeripheryIceNIC  { this: BaseSubsystem =>
+trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
   private val address = BigInt(0x10016000)
   private val portName = "Ice-NIC"
 
-  val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
-  pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
-  fbus.fromPort(Some(portName))() :=* icenic.dmanode
-  ibus.fromSync := icenic.intnode
+
+  val icenicOpt = p(NICKey).map { params =>
+    val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
+    pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
+    fbus.fromPort(Some(portName))() :=* icenic.dmanode
+    ibus.fromSync := icenic.intnode
+    icenic
+  }
 }
 
-trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
-  val outer: HasPeripheryIceNIC
-  val net = IO(new NICIO)
+trait CanHavePeripheryIceNICModuleImp extends LazyModuleImp {
+  val outer: CanHavePeripheryIceNIC
 
-  net <> outer.icenic.module.io.ext
+  val net = outer.icenicOpt.map { icenic =>
+    val nicio = IO(new NICIO)
+    nicio <> icenic.module.io.ext
+    nicio
+  }
 
   import PauseConsts.BT_PER_QUANTA
 
-  val nicConf = p(NICKey)
+  val nicConf = p(NICKey).getOrElse(NICConfig())
   private val packetWords = nicConf.packetMaxBytes / NET_IF_BYTES
   private val packetQuanta = (nicConf.packetMaxBytes * 8) / BT_PER_QUANTA
 
   def connectNicLoopback(qDepth: Int = 4 * packetWords, latency: Int = 10) {
-    net.macAddr := PlusArg("macaddr")
-    net.rlimit.inc := PlusArg("rlimit-inc", 1)
-    net.rlimit.period := PlusArg("rlimit-period", 1)
-    net.rlimit.size := PlusArg("rlimit-size", 8)
-    net.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
-    net.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
-    net.pauser.refresh := PlusArg("pauser-refresh", packetWords)
+    val netio = net.get
+    netio.macAddr := PlusArg("macaddr")
+    netio.rlimit.inc := PlusArg("rlimit-inc", 1)
+    netio.rlimit.period := PlusArg("rlimit-period", 1)
+    netio.rlimit.size := PlusArg("rlimit-size", 8)
+    netio.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
+    netio.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
+    netio.pauser.refresh := PlusArg("pauser-refresh", packetWords)
 
     if (nicConf.usePauser) {
       val pauser = Module(new PauserComplex(qDepth))
-      pauser.io.ext.flipConnect(NetDelay(net, latency))
+      pauser.io.ext.flipConnect(NetDelay(netio, latency))
       pauser.io.int.out <> pauser.io.int.in
-      pauser.io.macAddr := net.macAddr + (1 << 40).U
-      pauser.io.settings := net.pauser
+      pauser.io.macAddr := netio.macAddr + (1 << 40).U
+      pauser.io.settings := netio.pauser
     } else {
-      net.in <> Queue(LatencyPipe(net.out, latency), qDepth)
+      netio.in <> Queue(LatencyPipe(netio.out, latency), qDepth)
     }
-    net.in.bits.keep := NET_FULL_KEEP
+    netio.in.bits.keep := NET_FULL_KEEP
   }
 
   def connectSimNetwork(clock: Clock, reset: Bool) {
     val sim = Module(new SimNetwork)
     sim.io.clock := clock
     sim.io.reset := reset
-    sim.io.net <> net
+    sim.io.net <> net.get
   }
 }
 
@@ -485,8 +493,8 @@ object NICIOvonly {
 }
 
 trait HasPeripheryIceNICModuleImpValidOnly extends LazyModuleImp {
-  val outer: HasPeripheryIceNIC
+  val outer: CanHavePeripheryIceNIC
   val net = IO(new NICIOvonly)
 
-  net <> NICIOvonly(outer.icenic.module.io.ext)
+  net <> NICIOvonly(outer.icenicOpt.get.module.io.ext)
 }
