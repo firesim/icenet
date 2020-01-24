@@ -12,24 +12,28 @@ import testchipip.{StreamIO, StreamChannel, TLHelper}
 import IceNetConsts._
 
 case class NICConfig(
-  inBufFlits: Int  = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
-  outBufFlits: Int = 2 * ETH_MAX_BYTES / NET_IF_BYTES,
+  inBufFlits: Int  = 2 * ETH_STANDARD_MAX_BYTES / NET_IF_BYTES,
+  outBufFlits: Int = 2 * ETH_STANDARD_MAX_BYTES / NET_IF_BYTES,
   nMemXacts: Int = 8,
   maxAcquireBytes: Int = 64,
   ctrlQueueDepth: Int = 10,
-  usePauser: Boolean = false)
+  usePauser: Boolean = false,
+  checksumOffload: Boolean = false,
+  packetMaxBytes: Int = ETH_STANDARD_MAX_BYTES)
 
-case object NICKey extends Field[NICConfig]
+case object NICKey extends Field[Option[NICConfig]](None)
 
 trait HasNICParameters {
   implicit val p: Parameters
-  val nicExternal = p(NICKey)
+  val nicExternal = p(NICKey).get
   val inBufFlits = nicExternal.inBufFlits
   val outBufFlits = nicExternal.outBufFlits
   val nMemXacts = nicExternal.nMemXacts
   val maxAcquireBytes = nicExternal.maxAcquireBytes
   val ctrlQueueDepth = nicExternal.ctrlQueueDepth
   val usePauser = nicExternal.usePauser
+  val checksumOffload = nicExternal.checksumOffload
+  val packetMaxBytes = nicExternal.packetMaxBytes
 }
 
 abstract class NICLazyModule(implicit p: Parameters)
@@ -60,6 +64,9 @@ trait IceNicControllerBundle extends Bundle {
   val send = new IceNicSendIO
   val recv = new IceNicRecvIO
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
+  val txcsumReq = Decoupled(new ChecksumRewriteRequest)
+  val rxcsumRes = Flipped(Decoupled(new TCPChecksumOffloadResult))
+  val csumEnable = Output(Bool())
 }
 
 trait IceNicControllerModule extends HasRegMap with HasNICParameters {
@@ -105,6 +112,20 @@ trait IceNicControllerModule extends HasRegMap with HasNICParameters {
     (sendCompValid, true.B)
   }
 
+  val txcsumReqQueue = Module(new HellaQueue(qDepth)(UInt(49.W)))
+  val rxcsumResQueue = Module(new HellaQueue(qDepth)(UInt(2.W)))
+  val csumEnable = RegInit(false.B)
+
+  io.txcsumReq.valid := txcsumReqQueue.io.deq.valid
+  io.txcsumReq.bits := txcsumReqQueue.io.deq.bits.asTypeOf(new ChecksumRewriteRequest)
+  txcsumReqQueue.io.deq.ready := io.txcsumReq.ready
+
+  rxcsumResQueue.io.enq.valid := io.rxcsumRes.valid
+  rxcsumResQueue.io.enq.bits := io.rxcsumRes.bits.asUInt
+  io.rxcsumRes.ready := rxcsumResQueue.io.enq.ready
+
+  io.csumEnable := csumEnable
+
   regmap(
     0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
     0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
@@ -116,7 +137,10 @@ trait IceNicControllerModule extends HasRegMap with HasNICParameters {
       RegField.r(8, sendCompCount),
       RegField.r(8, recvCompCount)),
     0x18 -> Seq(RegField.r(ETH_MAC_BITS, io.macAddr)),
-    0x20 -> Seq(RegField(2, intMask)))
+    0x20 -> Seq(RegField(2, intMask)),
+    0x28 -> Seq(RegField.w(49, txcsumReqQueue.io.enq)),
+    0x30 -> Seq(RegField.r(2, rxcsumResQueue.io.deq)),
+    0x31 -> Seq(RegField(1, csumEnable)))
 }
 
 case class IceNicControllerParams(address: BigInt, beatBytes: Int)
@@ -144,6 +168,10 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
         Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
       val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
       val rlimit = Input(new RateLimiterSettings)
+      val csum = checksumOffload.option(new Bundle {
+        val req = Flipped(Decoupled(new ChecksumRewriteRequest))
+        val enable = Input(Bool())
+      })
     })
 
     val readreq = reader.module.io.req
@@ -154,11 +182,31 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     readreq.bits.partial := io.send.req.bits(63)
     io.send.comp <> reader.module.io.resp
 
-    val unlimitedOut = if (nInputTaps > 0) {
-      val arb = Module(new PacketArbiter(1 + nInputTaps, rr = true))
-      arb.io.in <> (reader.module.io.out +: io.tap.get)
+    val preArbOut = if (checksumOffload) {
+      val readerOut = reader.module.io.out
+      val arb = Module(new PacketArbiter(2))
+      val bufFlits = (packetMaxBytes - 1) / NET_IF_BYTES + 1
+      val rewriter = Module(new ChecksumRewrite(NET_IF_WIDTH, bufFlits))
+      val enable = io.csum.get.enable
+
+      rewriter.io.req <> io.csum.get.req
+
+      arb.io.in(0) <> rewriter.io.stream.out
+      arb.io.in(1).valid := !enable && readerOut.valid
+      arb.io.in(1).bits  := readerOut.bits
+      rewriter.io.stream.in.valid := enable && readerOut.valid
+      rewriter.io.stream.in.bits := readerOut.bits
+      readerOut.ready := Mux(enable,
+        rewriter.io.stream.in.ready, arb.io.in(1).ready)
+
       arb.io.out
     } else { reader.module.io.out }
+
+    val unlimitedOut = if (nInputTaps > 0) {
+      val arb = Module(new PacketArbiter(1 + nInputTaps, rr = true))
+      arb.io.in <> (preArbOut +: io.tap.get)
+      arb.io.out
+    } else { preArbOut }
 
     val limiter = Module(new RateLimiter(new StreamChannel(NET_IF_WIDTH)))
     limiter.io.in <> unlimitedOut
@@ -219,6 +267,10 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
     val tap = outer.tapFuncs.nonEmpty.option(
       Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
+    val csum = checksumOffload.option(new Bundle {
+      val res = Decoupled(new TCPChecksumOffloadResult)
+      val enable = Input(Bool())
+    })
     val buf_free = Output(UInt(8.W))
   })
 
@@ -228,15 +280,33 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   buffer.io.stream.in <> io.in
   io.buf_free := buffer.io.free
 
-  val writer = outer.writer.module
-  writer.io.length := buffer.io.length
-  writer.io.recv <> io.recv
-  writer.io.in <> (if (outer.tapFuncs.nonEmpty) {
+  val tapout = if (outer.tapFuncs.nonEmpty) {
     val tap = Module(new NetworkTap(outer.tapFuncs))
     tap.io.inflow <> buffer.io.stream.out
     io.tap.get <> tap.io.tapout
     tap.io.passthru
-  } else { buffer.io.stream.out })
+  } else { buffer.io.stream.out }
+
+  val csumout = (if (checksumOffload) {
+    val offload = Module(new TCPChecksumOffload(NET_IF_WIDTH))
+    val offloadReady = offload.io.in.ready || !io.csum.get.enable
+    val out = Wire(Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val helper = DecoupledHelper(tapout.valid, offloadReady, out.ready)
+
+    out.valid := helper.fire(out.ready)
+    out.bits  := tapout.bits
+    offload.io.in.valid := helper.fire(offloadReady, io.csum.get.enable)
+    offload.io.in.bits := tapout.bits
+    tapout.ready := helper.fire(tapout.valid)
+    io.csum.get.res <> offload.io.result
+    out
+  } else { tapout })
+
+  val writer = outer.writer.module
+  writer.io.recv <> io.recv
+  writer.io.in <> csumout
+  writer.io.length.valid := buffer.io.length.valid && writer.io.in.valid
+  writer.io.length.bits  := buffer.io.length.bits
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -315,6 +385,17 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     sendPath.module.io.tap.zip(io.tapIn).foreach {
       case (a, b) => a <> b
     }
+
+    if (checksumOffload) {
+      sendPath.module.io.csum.get.req <> control.module.io.txcsumReq
+      sendPath.module.io.csum.get.enable := control.module.io.csumEnable
+      control.module.io.rxcsumRes <> recvPath.module.io.csum.get.res
+      recvPath.module.io.csum.get.enable := control.module.io.csumEnable
+    } else {
+      control.module.io.txcsumReq.ready := false.B
+      control.module.io.rxcsumRes.valid := false.B
+      control.module.io.rxcsumRes.bits := DontCare
+    }
   }
 }
 
@@ -326,53 +407,62 @@ class SimNetwork extends BlackBox {
   })
 }
 
-trait HasPeripheryIceNIC  { this: BaseSubsystem =>
+trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
   private val address = BigInt(0x10016000)
   private val portName = "Ice-NIC"
 
-  val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
-  pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
-  fbus.fromPort(Some(portName))() :=* icenic.dmanode
-  ibus.fromSync := icenic.intnode
+
+  val icenicOpt = p(NICKey).map { params =>
+    val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
+    pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
+    fbus.fromPort(Some(portName))() :=* icenic.dmanode
+    ibus.fromSync := icenic.intnode
+    icenic
+  }
 }
 
-trait HasPeripheryIceNICModuleImp extends LazyModuleImp {
-  val outer: HasPeripheryIceNIC
-  val net = IO(new NICIO)
+trait CanHavePeripheryIceNICModuleImp extends LazyModuleImp {
+  val outer: CanHavePeripheryIceNIC
 
-  net <> outer.icenic.module.io.ext
+  val net = outer.icenicOpt.map { icenic =>
+    val nicio = IO(new NICIO)
+    nicio <> icenic.module.io.ext
+    nicio
+  }
 
   import PauseConsts.BT_PER_QUANTA
 
-  private val packetWords = ETH_MAX_BYTES / NET_IF_BYTES
-  private val packetQuanta = (ETH_MAX_BYTES * 8) / BT_PER_QUANTA
+  val nicConf = p(NICKey).getOrElse(NICConfig())
+  private val packetWords = nicConf.packetMaxBytes / NET_IF_BYTES
+  private val packetQuanta = (nicConf.packetMaxBytes * 8) / BT_PER_QUANTA
 
   def connectNicLoopback(qDepth: Int = 4 * packetWords, latency: Int = 10) {
+    val netio = net.get
+    netio.macAddr := PlusArg("macaddr")
+    netio.rlimit.inc := PlusArg("rlimit-inc", 1)
+    netio.rlimit.period := PlusArg("rlimit-period", 1)
+    netio.rlimit.size := PlusArg("rlimit-size", 8)
+    netio.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
+    netio.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
+    netio.pauser.refresh := PlusArg("pauser-refresh", packetWords)
 
-    net.macAddr := PlusArg("macaddr")
-    net.rlimit.inc := PlusArg("rlimit-inc", 1)
-    net.rlimit.period := PlusArg("rlimit-period", 1)
-    net.rlimit.size := PlusArg("rlimit-size", 8)
-    net.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
-    net.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
-    net.pauser.refresh := PlusArg("pauser-refresh", packetWords)
-
-    if (p(NICKey).usePauser) {
+    if (nicConf.usePauser) {
       val pauser = Module(new PauserComplex(qDepth))
-      pauser.io.ext.flipConnect(NetDelay(net, latency))
+      pauser.io.ext.flipConnect(NetDelay(netio, latency))
       pauser.io.int.out <> pauser.io.int.in
-      pauser.io.macAddr := net.macAddr + (1 << 40).U
-      pauser.io.settings := net.pauser
+      pauser.io.macAddr := netio.macAddr + (1 << 40).U
+      pauser.io.settings := netio.pauser
     } else {
-      net.in <> Queue(LatencyPipe(net.out, latency), qDepth)
+      netio.in <> Queue(LatencyPipe(netio.out, latency), qDepth)
     }
+    netio.in.bits.keep := NET_FULL_KEEP
   }
 
   def connectSimNetwork(clock: Clock, reset: Bool) {
     val sim = Module(new SimNetwork)
     sim.io.clock := clock
     sim.io.reset := reset
-    sim.io.net <> net
+    sim.io.net <> net.get
   }
 }
 
@@ -403,8 +493,8 @@ object NICIOvonly {
 }
 
 trait HasPeripheryIceNICModuleImpValidOnly extends LazyModuleImp {
-  val outer: HasPeripheryIceNIC
+  val outer: CanHavePeripheryIceNIC
   val net = IO(new NICIOvonly)
 
-  net <> NICIOvonly(outer.icenic.module.io.ext)
+  net <> NICIOvonly(outer.icenicOpt.get.module.io.ext)
 }

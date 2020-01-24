@@ -64,3 +64,24 @@ class UDPHeader extends Bundle {
   val dest_port = UInt(16.W)
   val source_port = UInt(16.W)
 }
+
+class TCPHeader extends Bundle {
+  val urgent_pointer = UInt(16.W)
+  val checksum = UInt(16.W)
+  val window_size = UInt(16.W)
+  val cwr = Bool()
+  val ece = Bool()
+  val urg = Bool()
+  val ack = Bool()
+  val psh = Bool()
+  val rst = Bool()
+  val syn = Bool()
+  val fin = Bool()
+  val data_offset = UInt(4.W)
+  val reserved = UInt(3.W)
+  val ns = Bool()
+  val acknum = UInt(32.W)
+  val seqnum = UInt(32.W)
+  val dest_port = UInt(16.W)
+  val source_port = UInt(16.W)
+}

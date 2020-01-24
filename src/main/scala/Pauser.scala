@@ -168,7 +168,7 @@ class PauserComplex(nFlits: Int) extends Module {
 class PauserTest extends UnitTest {
   val nFlits = 400
   val latency = 128
-  val packetWords = ETH_MAX_BYTES / NET_IF_BYTES
+  val packetWords = ETH_STANDARD_MAX_BYTES / NET_IF_BYTES
   val threshold = latency + packetWords
   val pauseQuanta = threshold / CYCLES_PER_QUANTA
   val pauseRefresh = packetWords
