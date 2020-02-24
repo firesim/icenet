@@ -399,12 +399,19 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
   }
 }
 
-class SimNetwork extends BlackBox {
+class SimNetwork extends BlackBox with HasBlackBoxResource {
   val io = IO(new Bundle {
     val clock = Input(Clock())
     val reset = Input(Bool())
-    val net = Flipped(new NICIO)
+    val net = Flipped(new NICIOvonly)
   })
+  addResource("/vsrc/SimNetwork.v")
+  addResource("/csrc/SimNetwork.cc")
+  addResource("/csrc/device.h")
+  addResource("/csrc/device.cc")
+  addResource("/csrc/switch.h")
+  addResource("/csrc/switch.cc")
+  addResource("/csrc/packet.h")
 }
 
 
@@ -496,7 +503,8 @@ trait CanHavePeripheryIceNICModuleImp extends LazyModuleImp {
       pauser.io.macAddr := netio.macAddr + (1 << 40).U
       pauser.io.settings := netio.pauser
     } else {
-      netio.in <> Queue(LatencyPipe(NICIO(netio).out, latency), qDepth)
+
+      netio.in := Pipe(netio.out, latency)
     }
     netio.in.bits.keep := NET_FULL_KEEP
   }
