@@ -1,5 +1,6 @@
 #include <vpi_user.h>
 #include <svdpi.h>
+#include <stdio.h>
 
 #include "device.h"
 #include "switch.h"
@@ -37,32 +38,26 @@ extern "C" void network_init(
 
 extern "C" void network_tick(
         unsigned char out_valid,
-        unsigned char *out_ready,
         long long     out_data,
         unsigned char out_last,
 
         unsigned char *in_valid,
-        unsigned char in_ready,
         long long     *in_data,
         unsigned char *in_last,
 
         long long     *macaddr)
 {
     if (!netdev || !netsw) {
-        *out_ready = 0;
-        *in_valid = 0;
-        *in_data = 0;
-        *in_last = 0;
-        return;
+      fprintf(stderr, "You forgot to call network_init!");
+      exit(1);
     }
 
-    netdev->tick(out_valid, out_data, out_last, in_ready);
+    netdev->tick(out_valid, out_data, out_last);
     netdev->switch_to_host();
 
     netsw->distribute();
     netsw->switch_to_worker();
 
-    *out_ready = netdev->out_ready();
     *in_valid = netdev->in_valid();
     *in_data = netdev->in_data();
     *in_last = netdev->in_last();

@@ -16,10 +16,8 @@ class NetworkDevice {
     void tick(
             bool out_valid,
             uint64_t out_data,
-            bool out_last,
-            bool in_ready);
+            bool out_last);
 
-    bool out_ready() { return true; }
     bool in_valid() { return !in_flits.empty(); }
     uint64_t in_data() { return (in_valid()) ? in_flits.front().data : 0; }
     bool in_last() { return (in_valid()) ? in_flits.front().last : false; }

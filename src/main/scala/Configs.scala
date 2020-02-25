@@ -25,3 +25,16 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
 
 class IceNetUnitTestConfig extends Config(
   new WithIceNetUnitTests ++ new BaseSubsystemConfig)
+
+class WithIceNIC(inBufFlits: Int = 1800, usePauser: Boolean = false, ctrlQueueDepth: Int = 64)
+    extends Config((site, here, up) => {
+  case NICKey => Some(NICConfig(
+    inBufFlits = inBufFlits,
+    ctrlQueueDepth = ctrlQueueDepth,
+    usePauser = usePauser,
+    checksumOffload = true))
+})
+
+class WithNoIceNIC extends Config((site, here, up) => {
+  case NICKey => None
+})
