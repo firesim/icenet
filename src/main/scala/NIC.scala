@@ -480,22 +480,20 @@ trait CanHavePeripheryIceNICModuleImp extends LazyModuleImp {
     nicio
   }
 
-  val nicConf = p(NICKey).getOrElse(NICConfig())
-
-  def connectNicLoopback(qDepth: Int, latency: Int) = NicLoopback.connect(net, nicConf, qDepth, latency)
-  def connectNicLoopback(qDepth: Int) = NicLoopback.connect(net, nicConf, qDepth)
-  def connectNicLoopback() = NicLoopback.connect(net, nicConf)
+  def connectNicLoopback(qDepth: Int, latency: Int) = NicLoopback.connect(net, p(NICKey), qDepth, latency)
+  def connectNicLoopback(qDepth: Int) = NicLoopback.connect(net, p(NICKey), qDepth)
+  def connectNicLoopback() = NicLoopback.connect(net, p(NICKey))
 
   def connectSimNetwork(clock: Clock, reset: Bool) = SimNetwork.connect(net, clock, reset)
 }
 
 
 object NicLoopback {
-  def connect(net: Option[NICIOvonly], nicConf: NICConfig, qDepth: Int, latency: Int = 10) {
+  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig], qDepth: Int, latency: Int = 10) {
     net.foreach { netio =>
       import PauseConsts.BT_PER_QUANTA
-      val packetWords = nicConf.packetMaxBytes / NET_IF_BYTES
-      val packetQuanta = (nicConf.packetMaxBytes * 8) / BT_PER_QUANTA
+      val packetWords = nicConf.get.packetMaxBytes / NET_IF_BYTES
+      val packetQuanta = (nicConf.get.packetMaxBytes * 8) / BT_PER_QUANTA
       netio.macAddr := PlusArg("macaddr")
       netio.rlimit.inc := PlusArg("rlimit-inc", 1)
       netio.rlimit.period := PlusArg("rlimit-period", 1)
@@ -504,7 +502,7 @@ object NicLoopback {
       netio.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
       netio.pauser.refresh := PlusArg("pauser-refresh", packetWords)
 
-      if (nicConf.usePauser) {
+      if (nicConf.get.usePauser) {
         val pauser = Module(new PauserComplex(qDepth))
         pauser.io.ext.flipConnect(NetDelay(NICIO(netio), latency))
         pauser.io.int.out <> pauser.io.int.in
@@ -518,9 +516,11 @@ object NicLoopback {
     }
   }
 
-  def connect(net: Option[NICIOvonly], nicConf: NICConfig) {
-    val packetWords = nicConf.packetMaxBytes / NET_IF_BYTES
-    NicLoopback.connect(net, nicConf, 4 * packetWords)
+  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig]) {
+    net.foreach { netio =>
+      val packetWords = nicConf.get.packetMaxBytes / NET_IF_BYTES
+      NicLoopback.connect(net, nicConf, 4 * packetWords)
+    }
   }
 }
 
