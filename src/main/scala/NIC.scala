@@ -480,40 +480,57 @@ trait CanHavePeripheryIceNICModuleImp extends LazyModuleImp {
     nicio
   }
 
-  import PauseConsts.BT_PER_QUANTA
+  def connectNicLoopback(qDepth: Int, latency: Int) = NicLoopback.connect(net, p(NICKey), qDepth, latency)
+  def connectNicLoopback(qDepth: Int) = NicLoopback.connect(net, p(NICKey), qDepth)
+  def connectNicLoopback() = NicLoopback.connect(net, p(NICKey))
 
-  val nicConf = p(NICKey).getOrElse(NICConfig())
-  private val packetWords = nicConf.packetMaxBytes / NET_IF_BYTES
-  private val packetQuanta = (nicConf.packetMaxBytes * 8) / BT_PER_QUANTA
+  def connectSimNetwork(clock: Clock, reset: Bool) = SimNetwork.connect(net, clock, reset)
+}
 
-  def connectNicLoopback(qDepth: Int = 4 * packetWords, latency: Int = 10) {
-    val netio = net.get
-    netio.macAddr := PlusArg("macaddr")
-    netio.rlimit.inc := PlusArg("rlimit-inc", 1)
-    netio.rlimit.period := PlusArg("rlimit-period", 1)
-    netio.rlimit.size := PlusArg("rlimit-size", 8)
-    netio.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
-    netio.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
-    netio.pauser.refresh := PlusArg("pauser-refresh", packetWords)
 
-    if (nicConf.usePauser) {
-      val pauser = Module(new PauserComplex(qDepth))
-      pauser.io.ext.flipConnect(NetDelay(NICIO(netio), latency))
-      pauser.io.int.out <> pauser.io.int.in
-      pauser.io.macAddr := netio.macAddr + (1 << 40).U
-      pauser.io.settings := netio.pauser
-    } else {
+object NicLoopback {
+  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig], qDepth: Int, latency: Int = 10) {
+    net.foreach { netio =>
+      import PauseConsts.BT_PER_QUANTA
+      val packetWords = nicConf.get.packetMaxBytes / NET_IF_BYTES
+      val packetQuanta = (nicConf.get.packetMaxBytes * 8) / BT_PER_QUANTA
+      netio.macAddr := PlusArg("macaddr")
+      netio.rlimit.inc := PlusArg("rlimit-inc", 1)
+      netio.rlimit.period := PlusArg("rlimit-period", 1)
+      netio.rlimit.size := PlusArg("rlimit-size", 8)
+      netio.pauser.threshold := PlusArg("pauser-threshold", 2 * packetWords + latency)
+      netio.pauser.quanta := PlusArg("pauser-quanta", 2 * packetQuanta)
+      netio.pauser.refresh := PlusArg("pauser-refresh", packetWords)
 
-      netio.in := Pipe(netio.out, latency)
+      if (nicConf.get.usePauser) {
+        val pauser = Module(new PauserComplex(qDepth))
+        pauser.io.ext.flipConnect(NetDelay(NICIO(netio), latency))
+        pauser.io.int.out <> pauser.io.int.in
+        pauser.io.macAddr := netio.macAddr + (1 << 40).U
+        pauser.io.settings := netio.pauser
+      } else {
+
+        netio.in := Pipe(netio.out, latency)
+      }
+      netio.in.bits.keep := NET_FULL_KEEP
     }
-    netio.in.bits.keep := NET_FULL_KEEP
   }
 
-  def connectSimNetwork(clock: Clock, reset: Bool) {
-    val sim = Module(new SimNetwork)
-    sim.io.clock := clock
-    sim.io.reset := reset
-    sim.io.net <> net.get
+  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig]) {
+    net.foreach { netio =>
+      val packetWords = nicConf.get.packetMaxBytes / NET_IF_BYTES
+      NicLoopback.connect(net, nicConf, 4 * packetWords)
+    }
   }
 }
 
+object SimNetwork {
+  def connect(net: Option[NICIOvonly], clock: Clock, reset: Bool) {
+    net.foreach { netio =>
+      val sim = Module(new SimNetwork)
+      sim.io.clock := clock
+      sim.io.reset := reset
+      sim.io.net <> netio
+    }
+  }
+}
