@@ -54,6 +54,8 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     val addrBits = tl.params.addressBits
     val lenBits = 15
 
+    require (edge.manager.minLatency > 0)
+
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest))
       val resp = Decoupled(Bool())
@@ -187,6 +189,8 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
     val byteAddrBits = log2Ceil(beatBytes)
     val addrBits = tl.params.addressBits
     val lenBits = 16
+
+    require (edge.manager.minLatency > 0)
 
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamWriteRequest))
