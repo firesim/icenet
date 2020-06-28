@@ -164,8 +164,7 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
       val send = Flipped(new IceNicSendIO)
-      val tap = (nInputTaps > 0).option(
-        Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
+      val tap = Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH))))
       val out = Decoupled(new StreamChannel(NET_IF_WIDTH))
       val rlimit = Input(new RateLimiterSettings)
       val csum = checksumOffload.option(new Bundle {
@@ -204,7 +203,7 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
 
     val unlimitedOut = if (nInputTaps > 0) {
       val arb = Module(new PacketArbiter(1 + nInputTaps, rr = true))
-      arb.io.in <> (preArbOut +: io.tap.get)
+      arb.io.in <> (preArbOut +: io.tap)
       arb.io.out
     } else { preArbOut }
 
@@ -265,8 +264,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
     val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH))) // input stream 
-    val tap = outer.tapFuncs.nonEmpty.option(
-      Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
+    val tap = Vec(outer.tapFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH)))
     val csum = checksumOffload.option(new Bundle {
       val res = Decoupled(new TCPChecksumOffloadResult)
       val enable = Input(Bool())
@@ -283,7 +281,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val tapout = if (outer.tapFuncs.nonEmpty) {
     val tap = Module(new NetworkTap(outer.tapFuncs))
     tap.io.inflow <> buffer.io.stream.out
-    io.tap.get <> tap.io.tapout
+    io.tap <> tap.io.tapout
     tap.io.passthru
   } else { buffer.io.stream.out }
 
@@ -369,10 +367,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
       val ext = new NICIO
-      val tapOut = tapOutFuncs.nonEmpty.option(
-        Vec(tapOutFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH))))
-      val tapIn = (nInputTaps > 0).option(
-        Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH)))))
+      val tapOut = Vec(tapOutFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH)))
+      val tapIn = Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH))))
     })
 
     sendPath.module.io.send <> control.module.io.send
@@ -396,12 +392,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
     control.module.io.macAddr := io.ext.macAddr
     sendPath.module.io.rlimit := io.ext.rlimit
 
-    io.tapOut.zip(recvPath.module.io.tap).foreach {
-      case (a, b) => a <> b
-    }
-    sendPath.module.io.tap.zip(io.tapIn).foreach {
-      case (a, b) => a <> b
-    }
+    io.tapOut <> recvPath.module.io.tap
+    sendPath.module.io.tap <> io.tapIn
 
     if (checksumOffload) {
       sendPath.module.io.csum.get.req <> control.module.io.txcsumReq
