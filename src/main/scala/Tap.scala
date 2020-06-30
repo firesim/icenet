@@ -57,7 +57,7 @@ class NetworkTap[T <: Data](
   io.passthru.bits.last := MuxLookup(Cat(state, hasTapout), false.B, Seq(
     Cat(s_output_header, false.B) -> (bodyLess && headerIdx === headerLen),
     Cat(s_forward_body,  false.B) -> io.inflow.bits.last))
-  io.passthru.bits.keep := DontCare
+  io.passthru.bits.keep := NET_FULL_KEEP
 
   io.tapout.zip(route).foreach { case (tapout, sel) =>
     tapout.valid := MuxLookup(Cat(state, sel), false.B, Seq(
@@ -69,7 +69,7 @@ class NetworkTap[T <: Data](
     tapout.bits.last := MuxLookup(Cat(state, sel), false.B, Seq(
       Cat(s_output_header, true.B) -> (bodyLess && headerIdx === headerLen),
       Cat(s_forward_body,  true.B) -> io.inflow.bits.last))
-    tapout.bits.keep := DontCare
+    tapout.bits.keep := NET_FULL_KEEP
   }
 
   when (state === s_collect_header && io.inflow.valid) {
@@ -144,8 +144,6 @@ class NetworkTapTest extends UnitTest {
   tap.io.inflow <> genIn.io.out
   checkTap.io.in <> tap.io.tapout(0)
   checkPass.io.in <> tap.io.passthru
-  checkTap.io.in.bits.keep := NET_FULL_KEEP
-  checkPass.io.in.bits.keep := NET_FULL_KEEP
 
   io.finished := checkTap.io.finished || checkPass.io.finished
 }
