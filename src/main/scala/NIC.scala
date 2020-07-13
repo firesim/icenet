@@ -277,21 +277,53 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
       val res = Decoupled(new TCPChecksumOffloadResult)
       val enable = Input(Bool())
     })
-    val buf_free = Output(UInt(8.W))
+    val buf_free = Output(Vec(1 + outer.tapFuncs.length, UInt(8.W)))
   })
 
-  val dropChecks = if (usePauser) Seq(PauseDropCheck(_, _, _)) else Nil
-  val buffer = Module(new NetworkPacketBuffer(
-    inBufFlits, dropChecks = dropChecks, dropless = usePauser))
-  buffer.io.stream.in <> io.in
-  io.buf_free := buffer.io.free
+  def tapOutToDropCheck(tapOut: EthernetHeader => Bool) = {
+    (header: EthernetHeader, ch: StreamChannel, update: Bool) => {
+      val first = RegInit(true.B)
+      val drop = tapOut(header) && first
+      val dropReg = RegInit(false.B)
 
-  val tapout = if (outer.tapFuncs.nonEmpty) {
-    val tap = Module(new NetworkTap(outer.tapFuncs))
-    tap.io.inflow <> buffer.io.stream.out
-    io.tap <> tap.io.tapout
-    tap.io.passthru
-  } else { buffer.io.stream.out }
+      when (update && first) { first := false.B; dropReg := drop }
+      when (update && ch.last) { first := true.B; dropReg := false.B }
+
+      drop || dropReg
+    }
+  }
+
+  def duplicateStream(in: DecoupledIO[StreamChannel], outs: Seq[DecoupledIO[StreamChannel]]) = {
+    outs.foreach { out =>
+      out.valid := in.valid
+      out.bits := in.bits
+    }
+    in.ready := outs.head.ready
+    val outReadys = Cat(outs.map(_.ready))
+    assert(outReadys.andR || !outReadys.orR,
+      "Duplicated streams must all be ready simultaneously")
+    outs
+  }
+
+  def invertCheck(check: (EthernetHeader, StreamChannel, Bool) => Bool) =
+    (eth: EthernetHeader, ch: StreamChannel, up: Bool) => !check(eth, ch, up)
+
+  val tapDropChecks = outer.tapFuncs.map(func => tapOutToDropCheck(func))
+  val pauseDropCheck = if (usePauser) Some(PauseDropCheck(_, _, _)) else None
+  val allDropChecks =
+    Seq(tapDropChecks ++ pauseDropCheck.toSeq) ++
+    tapDropChecks.map(check => invertCheck(check) +: pauseDropCheck.toSeq)
+
+  val buffers = allDropChecks.map(dropChecks =>
+    Module(new NetworkPacketBuffer(
+      inBufFlits, dropChecks = dropChecks, dropless = usePauser)))
+  duplicateStream(io.in, buffers.map(_.io.stream.in))
+
+  io.buf_free := buffers.map(_.io.free)
+
+  io.tap <> buffers.tail.map(_.io.stream.out)
+  val bufout = buffers.head.io.stream.out
+  val buflen = buffers.head.io.length
 
   val (csumout, recvreq) = (if (checksumOffload) {
     val offload = Module(new TCPChecksumOffload(NET_IF_WIDTH))
@@ -304,7 +336,7 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     val enqHelper = DecoupledHelper(
       io.recv.req.valid, reqq.io.enq.ready, recvreq.ready)
     val deqHelper = DecoupledHelper(
-      tapout.valid, offloadReady, out.ready, reqq.io.deq.valid)
+      bufout.valid, offloadReady, out.ready, reqq.io.deq.valid)
 
     reqq.io.enq.valid := enqHelper.fire(reqq.io.enq.ready)
     reqq.io.enq.bits := io.recv.req.bits
@@ -313,23 +345,23 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     recvreq.bits := io.recv.req.bits
 
     out.valid := deqHelper.fire(out.ready)
-    out.bits  := tapout.bits
+    out.bits  := bufout.bits
     offload.io.in.valid := deqHelper.fire(offloadReady, io.csum.get.enable)
-    offload.io.in.bits := tapout.bits
-    tapout.ready := deqHelper.fire(tapout.valid)
-    reqq.io.deq.ready := deqHelper.fire(reqq.io.deq.valid, tapout.bits.last)
+    offload.io.in.bits := bufout.bits
+    bufout.ready := deqHelper.fire(bufout.valid)
+    reqq.io.deq.ready := deqHelper.fire(reqq.io.deq.valid, bufout.bits.last)
 
     io.csum.get.res <> offload.io.result
 
     (out, recvreq)
-  } else { (tapout, io.recv.req) })
+  } else { (bufout, io.recv.req) })
 
   val writer = outer.writer.module
   writer.io.recv.req <> Queue(recvreq, 1)
   io.recv.comp <> writer.io.recv.comp
   writer.io.in <> csumout
-  writer.io.length.valid := buffer.io.length.valid && writer.io.in.valid
-  writer.io.length.bits  := buffer.io.length.bits
+  writer.io.length.valid := buflen.valid
+  writer.io.length.bits  := buflen.bits
 }
 
 class NICIO extends StreamIO(NET_IF_WIDTH) {
@@ -384,7 +416,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
 
     // connect externally
     if (usePauser) {
-      val pauser = Module(new Pauser(inBufFlits))
+      val pauser = Module(new Pauser(inBufFlits, 1 + tapOutFuncs.length))
       pauser.io.int.out <> sendPath.module.io.out
       recvPath.module.io.in <> pauser.io.int.in
       io.ext.out <> pauser.io.ext.out

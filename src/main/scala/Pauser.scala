@@ -37,25 +37,26 @@ object PauseDropCheck extends NetworkEndianHelpers {
     val isPauseReg = RegInit(false.B)
 
     when (update && first)  { first := false.B; isPauseReg := isPause }
-    when (ch.last) { first := true.B; isPauseReg := false.B }
+    when (update && ch.last) { first := true.B; isPauseReg := false.B }
 
     isPause || isPauseReg
   }
 }
 
-class Pauser(creditInit: Int) extends Module with NetworkEndianHelpers {
+class Pauser(creditInit: Int, nBuckets: Int) extends Module
+    with NetworkEndianHelpers {
   val timerBits = 16 + log2Ceil(CYCLES_PER_QUANTA)
   val creditBits = log2Ceil(creditInit + 1)
 
   val io = IO(new Bundle {
     val ext = new StreamIO(NET_IF_WIDTH)
     val int = Flipped(new StreamIO(NET_IF_WIDTH))
-    val in_free = Input(UInt(8.W))
+    val in_free = Input(Vec(nBuckets, UInt(8.W)))
     val macAddr = Input(UInt(48.W))
     val settings = Input(new PauserSettings)
   })
 
-  val credits = RegInit(creditInit.U(16.W))
+  val credits = RegInit(VecInit(Seq.fill(nBuckets)(creditInit.U(16.W))))
   val outPauseTimer = RegInit(0.U(timerBits.W))
   val outPaused = outPauseTimer > 0.U
 
@@ -97,7 +98,9 @@ class Pauser(creditInit: Int) extends Module with NetworkEndianHelpers {
     }
   }
 
-  credits := credits - io.int.in.fire() + io.in_free
+  for (i <- 0 until nBuckets) {
+    credits(i) := credits(i) - io.int.in.fire() + io.in_free(i)
+  }
 
   val arb = Module(new PacketArbiter(2))
 
@@ -118,12 +121,14 @@ class Pauser(creditInit: Int) extends Module with NetworkEndianHelpers {
   val inPauseTimer = RegInit(0.U(16.W))
   val inPaused = inPauseTimer > 0.U
 
+  val creditsLow = credits.map(_ < io.settings.threshold).reduce(_ || _)
+
   when (outDone) {
     inPauseTimer := io.settings.refresh
     sendPause := false.B
   }
   when (inPaused) { inPauseTimer := inPauseTimer - 1.U }
-  when (credits < io.settings.threshold && !sendPause && !inPaused) {
+  when (creditsLow && !sendPause && !inPaused) {
     sendPause := true.B
   }
 
@@ -151,7 +156,7 @@ class PauserComplex(nFlits: Int) extends Module {
     val settings = Input(new PauserSettings)
   })
 
-  val pauser = Module(new Pauser(nFlits))
+  val pauser = Module(new Pauser(nFlits, 1))
   val buffer = Module(new NetworkPacketBuffer(
     nFlits, dropChecks = Seq(PauseDropCheck(_, _, _)), dropless = true))
 
@@ -161,7 +166,7 @@ class PauserComplex(nFlits: Int) extends Module {
 
   pauser.io.int.out <> io.int.out
   buffer.io.stream.in <> pauser.io.int.in
-  pauser.io.in_free := buffer.io.free
+  pauser.io.in_free(0) := buffer.io.free
   io.int.in <> buffer.io.stream.out
 }
 
