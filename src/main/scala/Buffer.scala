@@ -3,6 +3,7 @@ package icenet
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
+import freechips.rocketchip.util.TwoWayCounter
 import scala.util.Random
 import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
@@ -408,4 +409,23 @@ class ReservationBuffer(nXacts: Int, nWords: Int, dataBits: Int) extends Module 
     occupied := true.B
     tail := incWrap(tail, 1.U)
   }
+}
+
+class PacketCollectionBuffer(bufWords: Int) extends Module {
+  val io = IO(new StreamIO(NET_IF_WIDTH))
+
+  val headerWords = ETH_HEAD_BYTES / NET_IF_BYTES
+  val maxPackets = (bufWords - 1) / (headerWords + 1) + 1
+
+  val queue = Module(new Queue(new StreamChannel(NET_IF_WIDTH), bufWords))
+  val pktCount = TwoWayCounter(
+    queue.io.enq.fire() && queue.io.enq.bits.last,
+    queue.io.deq.fire() && queue.io.deq.bits.last,
+    maxPackets)
+  val canDequeue = pktCount > 0.U
+
+  queue.io.enq <> io.in
+  io.out.valid := queue.io.deq.valid && canDequeue
+  io.out.bits := queue.io.deq.bits
+  queue.io.deq.ready := io.out.ready && canDequeue
 }

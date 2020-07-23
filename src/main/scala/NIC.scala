@@ -210,8 +210,14 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     } else { reader.module.io.out }
 
     val unlimitedOut = if (nInputTaps > 0) {
-      val arb = Module(new PacketArbiter(1 + nInputTaps, rr = true))
-      arb.io.in <> (preArbOut +: io.tap)
+      val bufWords = (packetMaxBytes - 1) / NET_IF_BYTES + 1
+      val inputs = (preArbOut +: io.tap).map { in =>
+        val buffer = Module(new PacketCollectionBuffer(bufWords))
+        buffer.io.in <> in
+        buffer.io.out
+      }
+      val arb = Module(new PacketArbiter(inputs.size, rr = true))
+      arb.io.in <> inputs
       arb.io.out
     } else { preArbOut }
 
