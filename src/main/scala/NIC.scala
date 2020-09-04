@@ -464,6 +464,10 @@ trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
 
   val icenicOpt = p(NICKey).map { params =>
     val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
+    InModuleBody {
+      icenic.module.clock := pbus.module.clock
+      icenic.module.reset := pbus.module.reset
+    }
     pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
     fbus.fromPort(Some(portName))() :=* icenic.dmanode
     ibus.fromSync := icenic.intnode
