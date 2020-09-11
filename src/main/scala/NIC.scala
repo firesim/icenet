@@ -2,13 +2,15 @@ package icenet
 
 import chisel3._
 import chisel3.util._
-import freechips.rocketchip.subsystem.BaseSubsystem
+import chisel3.experimental.{IO}
+import freechips.rocketchip.subsystem.{BaseSubsystem, TLBusWrapperLocation, PBUS, FBUS}
 import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util._
-import testchipip.{StreamIO, StreamChannel, TLHelper}
+import freechips.rocketchip.prci.{ClockSinkDomain}
+import testchipip.{StreamIO, StreamChannel, TLHelper, ClockedIO}
 import IceNetConsts._
 
 case class NICConfig(
@@ -21,7 +23,13 @@ case class NICConfig(
   checksumOffload: Boolean = false,
   packetMaxBytes: Int = ETH_STANDARD_MAX_BYTES)
 
+case class NICAttachParams(
+  masterWhere: TLBusWrapperLocation = FBUS,
+  slaveWhere: TLBusWrapperLocation = PBUS
+)
+
 case object NICKey extends Field[Option[NICConfig]](None)
+case object NICAttachKey extends Field[NICAttachParams](NICAttachParams())
 
 trait HasNICParameters {
   implicit val p: Parameters
@@ -463,32 +471,33 @@ trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
 
 
   val icenicOpt = p(NICKey).map { params =>
-    val icenic = LazyModule(new IceNIC(address, pbus.beatBytes))
-    InModuleBody {
-      icenic.module.clock := pbus.module.clock
-      icenic.module.reset := pbus.module.reset
-    }
-    pbus.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
-    fbus.fromPort(Some(portName))() :=* icenic.dmanode
+    val manager = locateTLBusWrapper(p(NICAttachKey).slaveWhere)
+    val client = locateTLBusWrapper(p(NICAttachKey).masterWhere)
+    val domain = LazyModule(new ClockSinkDomain(name=Some(portName)))
+    // TODO: currently the controller is in the clock domain of the bus which masters it
+    // we assume this is same as the clock domain of the bus the controller masters
+    domain.clockNode := manager.fixedClockNode
+
+    val icenic = domain { LazyModule(new IceNIC(address, manager.beatBytes)) }
+
+    manager.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
+    client.fromPort(Some(portName))() :=* icenic.dmanode
     ibus.fromSync := icenic.intnode
-    icenic
+
+    val inner_io = domain { InModuleBody {
+      val inner_io = IO(new NICIOvonly).suggestName("nic")
+      inner_io <> NICIOvonly(icenic.module.io.ext)
+      inner_io
+    } }
+
+    val outer_io = InModuleBody {
+      val outer_io = IO(new ClockedIO(new NICIOvonly)).suggestName("nic")
+      outer_io.bits <> inner_io
+      outer_io.clock := domain.module.clock
+      outer_io
+    }
+    outer_io
   }
-}
-
-trait CanHavePeripheryIceNICModuleImp extends LazyModuleImp {
-  val outer: CanHavePeripheryIceNIC
-
-  val net = outer.icenicOpt.map { icenic =>
-    val nicio = IO(new NICIOvonly)
-    nicio <> NICIOvonly(icenic.module.io.ext)
-    nicio
-  }
-
-  def connectNicLoopback(qDepth: Int, latency: Int) = NicLoopback.connect(net, p(NICKey), qDepth, latency)
-  def connectNicLoopback(qDepth: Int) = NicLoopback.connect(net, p(NICKey), qDepth)
-  def connectNicLoopback() = NicLoopback.connect(net, p(NICKey))
-
-  def connectSimNetwork(clock: Clock, reset: Bool) = SimNetwork.connect(net, clock, reset)
 }
 
 
