@@ -295,23 +295,40 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
     tap.io.passthru
   } else { buffer.io.stream.out }
 
-  val csumout = (if (checksumOffload) {
+  val (csumout, recvreq) = (if (checksumOffload) {
     val offload = Module(new TCPChecksumOffload(NET_IF_WIDTH))
     val offloadReady = offload.io.in.ready || !io.csum.get.enable
-    val out = Wire(Decoupled(new StreamChannel(NET_IF_WIDTH)))
-    val helper = DecoupledHelper(tapout.valid, offloadReady, out.ready)
 
-    out.valid := helper.fire(out.ready)
+    val out = Wire(Decoupled(new StreamChannel(NET_IF_WIDTH)))
+    val recvreq = Wire(Decoupled(UInt(NET_IF_WIDTH.W)))
+    val reqq = Module(new Queue(UInt(NET_IF_WIDTH.W), 1))
+
+    val enqHelper = DecoupledHelper(
+      io.recv.req.valid, reqq.io.enq.ready, recvreq.ready)
+    val deqHelper = DecoupledHelper(
+      tapout.valid, offloadReady, out.ready, reqq.io.deq.valid)
+
+    reqq.io.enq.valid := enqHelper.fire(reqq.io.enq.ready)
+    reqq.io.enq.bits := io.recv.req.bits
+    io.recv.req.ready := enqHelper.fire(io.recv.req.valid)
+    recvreq.valid := enqHelper.fire(recvreq.ready)
+    recvreq.bits := io.recv.req.bits
+
+    out.valid := deqHelper.fire(out.ready)
     out.bits  := tapout.bits
-    offload.io.in.valid := helper.fire(offloadReady, io.csum.get.enable)
+    offload.io.in.valid := deqHelper.fire(offloadReady, io.csum.get.enable)
     offload.io.in.bits := tapout.bits
-    tapout.ready := helper.fire(tapout.valid)
+    tapout.ready := deqHelper.fire(tapout.valid)
+    reqq.io.deq.ready := deqHelper.fire(reqq.io.deq.valid, tapout.bits.last)
+
     io.csum.get.res <> offload.io.result
-    out
-  } else { tapout })
+
+    (out, recvreq)
+  } else { (tapout, io.recv.req) })
 
   val writer = outer.writer.module
-  writer.io.recv <> io.recv
+  writer.io.recv.req <> Queue(recvreq, 1)
+  io.recv.comp <> writer.io.recv.comp
   writer.io.in <> csumout
   writer.io.length.valid := buffer.io.length.valid && writer.io.in.valid
   writer.io.length.bits  := buffer.io.length.bits
