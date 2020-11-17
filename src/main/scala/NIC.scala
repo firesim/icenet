@@ -322,7 +322,9 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
 
   val buffers = allDropChecks.map(dropChecks =>
     Module(new NetworkPacketBuffer(
-      inBufFlits, dropChecks = dropChecks, dropless = usePauser)))
+      inBufFlits,
+      maxBytes = packetMaxBytes,
+      dropChecks = dropChecks, dropless = usePauser)))
   duplicateStream(io.in, buffers.map(_.io.stream.in))
 
   io.buf_free := buffers.map(_.io.free)
