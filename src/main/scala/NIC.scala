@@ -13,6 +13,16 @@ import freechips.rocketchip.prci.{ClockSinkDomain}
 import testchipip.{StreamIO, StreamChannel, TLHelper, ClockedIO}
 import IceNetConsts._
 
+/**
+ * @inBufFlits How many flits in the input buffer(s)
+ * @outBufFlits Number of flits in the output buffer
+ * @nMemXacts Maximum number of transactions that the send/receive path can send to memory
+ * @maxAcquireBytes Cache block size
+ * @ctrlQueueDepth Depth of the MMIO control queues
+ * @usePauser Hardware support for Ethernet pause frames
+ * @checksumOffload TCP checksum offload engine
+ * @packetMaxBytes Maximum number of bytes in a packet (header size + MTU)
+ */
 case class NICConfig(
   inBufFlits: Int  = 2 * ETH_STANDARD_MAX_BYTES / NET_IF_BYTES,
   outBufFlits: Int = 2 * ETH_STANDARD_MAX_BYTES / NET_IF_BYTES,
@@ -212,6 +222,10 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     val unlimitedOut = if (nInputTaps > 0) {
       val bufWords = (packetMaxBytes - 1) / NET_IF_BYTES + 1
       val inputs = (preArbOut +: io.tap).map { in =>
+        // The packet collection buffer doesn't allow sending the first flit
+        // of a packet until the last flit is received.
+        // This ensures that we don't lock the arbiter while waiting for data
+        // to arrive, which could cause deadocks.
         val buffer = Module(new PacketCollectionBuffer(bufWords))
         buffer.io.in <> in
         buffer.io.out
@@ -317,7 +331,11 @@ class IceNicRecvPathModule(outer: IceNicRecvPath)
   val tapDropChecks = outer.tapFuncs.map(func => tapOutToDropCheck(func))
   val pauseDropCheck = if (usePauser) Some(PauseDropCheck(_, _, _)) else None
   val allDropChecks =
+    // Drop checks for the primary buffer
+    // Drop if the packet should be tapped out or is a pause frame
     Seq(tapDropChecks ++ pauseDropCheck.toSeq) ++
+    // Drop checks for the tap buffers
+    // For each tap, drop if the packet doesn't match the tap function or is a pause frame
     tapDropChecks.map(check => invertCheck(check) +: pauseDropCheck.toSeq)
 
   val buffers = allDropChecks.map(dropChecks =>
@@ -387,12 +405,16 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
  * (see ExtBundle)
  * 
  * Ethernet Frame format:
- *   8 bytes    |  6 bytes  |  6 bytes    | 2 bytes  | 46-1500B | 4 bytes
- * Preamble/SFD | Dest Addr | Source Addr | Type/Len | Data     | CRC
- * Gen by NIC   | ------------- from/to CPU --------------------| Gen by NIC
+ *   2 bytes |  6 bytes  |  6 bytes    | 2 bytes  | 46-1500B
+ *   Padding | Dest Addr | Source Addr | Type/Len | Data
  *
- * For now, we elide the Gen by NIC components since we're talking to a 
- * custom network.
+ * @address Starting address of MMIO control registers
+ * @beatBytes Width of memory interface (in bytes)
+ * @tapOutFuncs Sequence of functions for each output tap.
+ *              Each function takes the header of an Ethernet frame
+ *              and returns Bool that is true if matching and false if not.
+ * @nInputTaps Number of input taps
+ *
  */
 class IceNIC(address: BigInt, beatBytes: Int = 8,
     tapOutFuncs: Seq[EthernetHeader => Bool] = Nil,

@@ -11,6 +11,8 @@ import IceNetConsts._
 class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   val addrBits = log2Ceil(n)
   val io = IO(new Bundle {
+    // The value in data becomes valid one cycle after enable is asserted.
+    // The value is held so long as enable is false
     val read = new Bundle {
       val en = Input(Bool())
       val addr = Input(UInt(addrBits.W))
@@ -38,6 +40,17 @@ class BufferBRAM[T <: Data](n: Int, typ: T) extends Module {
   io.read.data := Mux(rbypass, rbypass_data, rread_data)
 }
 
+/**
+ * Buffers incoming packets without backpressuring
+ * Drops at packet boundaries if buffer fills us.
+ * @bufWords Number of flits held by the buffer
+ * @maxBytes Maximum number of bytes in a packet
+ * @headerBytes Number of bytes in a header
+ * @headerType Bundle type for header
+ * @wordBytes Number of bytes in a flit
+ * @dropChecks Sequence of functions that can trigger a drop by asserting Bool
+ * @dropless If true, dropped packet causes assertion failure
+ */
 class NetworkPacketBuffer[T <: Data](
     bufWords: Int,
     maxBytes: Int = ETH_JUMBO_MAX_BYTES,
@@ -170,6 +183,7 @@ class NetworkPacketBuffer[T <: Data](
   val anyDrop = capDrop || nonCapDrop
   val dropLastFire = anyDrop && io.stream.in.fire() && io.stream.in.bits.last
 
+  // io.free indicates the number of flits being freed up on a cycle
   io.free := ren + Mux(dropLastFire, inIdx + 1.U, 0.U)
 
   when (io.stream.out.fire()) { outValidReg := false.B }

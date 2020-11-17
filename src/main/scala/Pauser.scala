@@ -43,6 +43,12 @@ object PauseDropCheck extends NetworkEndianHelpers {
   }
 }
 
+/**
+ * Flow control unit using Ethernet pause frames
+ * See https://en.wikipedia.org/wiki/Ethernet_flow_control#Pause_frame
+ * @creditInit Size of each buffer being tracked
+ * @nBuckets Number of buffers being tracked
+ */
 class Pauser(creditInit: Int, nBuckets: Int) extends Module
     with NetworkEndianHelpers {
   val timerBits = 16 + log2Ceil(CYCLES_PER_QUANTA)
