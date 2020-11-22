@@ -60,10 +60,12 @@ class NetworkPacketBuffer[T <: Data](
     dropChecks: Seq[(T, StreamChannel, Bool) => Bool] = Nil,
     dropless: Boolean = false) extends Module {
 
-  val maxWords = maxBytes / wordBytes
+  val maxWords = (maxBytes - 1) / wordBytes + 1
   val headerWords = headerBytes / wordBytes
   val wordBits = wordBytes * 8
   val nPackets = (bufWords - 1) / (headerWords + 1) + 1
+
+  require(headerBytes % wordBytes == 0)
 
   val idxBits = log2Ceil(bufWords)
   val phaseBits = log2Ceil(nPackets + 1)
