@@ -24,7 +24,7 @@ class TCAM(address: BigInt, val n: Int, val dataBits: Int, val nPorts: Int)
   val beatBytes = 1 << byteAddrBits
   val addrMask = (1 << (1 + addrBits + byteAddrBits)) - 1
 
-  val node = TLHelper.makeManagerNode(beatBytes, TLManagerParameters(
+  val node = TLHelper.makeManagerNode(beatBytes, TLSlaveParameters.v1(
     address = Seq(AddressSet(address, addrMask)),
     regionType = RegionType.PUT_EFFECTS,
     supportsGet = TransferSizes(1, beatBytes),
