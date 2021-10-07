@@ -13,8 +13,6 @@ class TCAMMatchIO(n: Int, dataBits: Int) extends Bundle {
   val addr = Input(UInt(addrBits.W))
   val found = Input(Bool())
 
-  override def cloneType =
-    new TCAMMatchIO(n, dataBits).asInstanceOf[this.type]
 }
 
 class TCAM(address: BigInt, val n: Int, val dataBits: Int, val nPorts: Int)

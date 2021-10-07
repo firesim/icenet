@@ -348,8 +348,6 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
   val id = UInt(xactIdBits.W)
   val count = UInt(countBits.W)
 
-  override def cloneType =
-    new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
 class ReservationBufferData(nXacts: Int, dataBits: Int) extends Bundle {
@@ -358,8 +356,6 @@ class ReservationBufferData(nXacts: Int, dataBits: Int) extends Bundle {
   val id = UInt(xactIdBits.W)
   val data = new StreamChannel(dataBits)
 
-  override def cloneType =
-    new ReservationBufferData(nXacts, dataBits).asInstanceOf[this.type]
 }
 
 class ReservationBuffer(nXacts: Int, nWords: Int, dataBits: Int) extends Module {

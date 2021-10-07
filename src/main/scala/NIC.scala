@@ -395,7 +395,6 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
   val rlimit = Input(new RateLimiterSettings)
   val pauser = Input(new PauserSettings)
 
-  override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
 
 /* 
@@ -501,7 +500,6 @@ class NICIOvonly extends Bundle {
   val rlimit = Input(new RateLimiterSettings)
   val pauser = Input(new PauserSettings)
 
-  override def cloneType = (new NICIOvonly).asInstanceOf[this.type]
 }
 
 object NICIOvonly {
