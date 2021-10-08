@@ -394,8 +394,6 @@ class NICIO extends StreamIO(NET_IF_WIDTH) {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings)
   val pauser = Input(new PauserSettings)
-
-  override def cloneType = (new NICIO).asInstanceOf[this.type]
 }
 
 /* 
@@ -500,8 +498,6 @@ class NICIOvonly extends Bundle {
   val macAddr = Input(UInt(ETH_MAC_BITS.W))
   val rlimit = Input(new RateLimiterSettings)
   val pauser = Input(new PauserSettings)
-
-  override def cloneType = (new NICIOvonly).asInstanceOf[this.type]
 }
 
 object NICIOvonly {
