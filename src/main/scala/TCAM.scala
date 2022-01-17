@@ -54,7 +54,7 @@ class TCAMModule(outer: TCAM) extends LazyModuleImp(outer) {
     TLMessages.AccessAck, TLMessages.AccessAckData)
   tl.d.bits.data := Mux(regsel, maskArr(wordaddr), dataArr(wordaddr))
 
-  when (acq.fire() && edge.hasData(acq.bits)) {
+  when (acq.fire && edge.hasData(acq.bits)) {
     when (regsel) {
       maskArr(wordaddr) := acq.bits.data(outer.dataBits - 1, 0)
     } .otherwise {

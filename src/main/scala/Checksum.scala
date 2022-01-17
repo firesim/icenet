@@ -50,7 +50,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
   io.result.valid := state === s_result
   io.result.bits := csum(15, 0)
 
-  when (io.req.fire()) {
+  when (io.req.fire) {
     check := io.req.bits.check
     start := io.req.bits.start
     csum := io.req.bits.init
@@ -58,7 +58,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
     state := s_stream
   }
 
-  when (io.stream.in.fire()) {
+  when (io.stream.in.fire) {
     when (check) {
       csum := csum + sumData
       startPos := nextStartPos
@@ -81,7 +81,7 @@ class ChecksumCalc(dataBits: Int) extends Module {
     }
   }
 
-  when (io.result.fire()) { state := s_req }
+  when (io.result.fire) { state := s_req }
 }
 
 class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
@@ -127,19 +127,19 @@ class ChecksumRewrite(dataBits: Int, nBufFlits: Int) extends Module {
   val s_req :: s_wait :: s_flush :: Nil = Enum(3)
   val state = RegInit(s_req)
 
-  when (reqq.io.deq.fire()) {
+  when (reqq.io.deq.fire) {
     check := reqq.io.deq.bits.check
     offset := reqq.io.deq.bits.offset
     startPos := 0.U
     state := Mux(reqq.io.deq.bits.check, s_wait, s_flush)
   }
 
-  when (calc.io.result.fire()) {
+  when (calc.io.result.fire) {
     csum := calc.io.result.bits
     state := s_flush
   }
 
-  when (io.stream.out.fire()) {
+  when (io.stream.out.fire) {
     startPos := nextStartPos
     when (io.stream.out.bits.last) { state := s_req }
   }
@@ -192,8 +192,8 @@ class ChecksumTest extends UnitTest {
   val rewriter = Module(new ChecksumRewrite(
     dataBits, data.length/shortsPerFlit))
 
-  val (inIdx, inDone) = Counter(rewriter.io.stream.in.fire(), dataVec.length)
-  val (outIdx, outDone) = Counter(rewriter.io.stream.out.fire(), expectedVec.length)
+  val (inIdx, inDone) = Counter(rewriter.io.stream.in.fire, dataVec.length)
+  val (outIdx, outDone) = Counter(rewriter.io.stream.out.fire, expectedVec.length)
 
   rewriter.io.req.valid := state === s_req
   rewriter.io.req.bits.check  := true.B
@@ -208,7 +208,7 @@ class ChecksumTest extends UnitTest {
   io.finished := state === s_done
 
   when (state === s_start && io.start) { state := s_req }
-  when (rewriter.io.req.fire()) { state := s_input }
+  when (rewriter.io.req.fire) { state := s_input }
   when (inDone) { state := s_output }
   when (outDone) { state := s_done }
 
@@ -277,7 +277,7 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
   val state = RegInit(s_header_in)
 
   val headerOK =
-    header.eth.ethType === IPV4_ETHTYPE.U && 
+    header.eth.ethType === IPV4_ETHTYPE.U &&
     header.ipv4.protocol === TCP_PROTOCOL.U &&
     header.ipv4.ihl === 5.U
   val headerChannel = Wire(new StreamChannel(dataBits))
@@ -308,7 +308,7 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
   io.result.bits.checked := resultExpected
   csum.io.result.ready := state === s_result && resultExpected && io.result.ready
 
-  when (io.in.fire()) {
+  when (io.in.fire) {
     when (io.in.bits.last) {
       state := s_result
     } .elsewhen (state === s_header_in) {
@@ -321,7 +321,7 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
     }
   }
 
-  when (csum.io.req.fire()) {
+  when (csum.io.req.fire) {
     headerIdx := 0.U
     state := s_header_csum
   }
@@ -333,7 +333,7 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
     }
   }
 
-  when (io.result.fire()) {
+  when (io.result.fire) {
     headerIdx := 0.U
     resultExpected := false.B
     state := s_header_in
@@ -367,8 +367,8 @@ class ChecksumTCPVerify extends UnitTest {
 
   val offload = Module(new TCPChecksumOffload(NET_IF_WIDTH))
 
-  val (inIdx, inDone) = Counter(offload.io.in.fire(), dataWords.length)
-  val (resultIdx, resultDone) = Counter(offload.io.result.fire(), expectedResults.length)
+  val (inIdx, inDone) = Counter(offload.io.in.fire, dataWords.length)
+  val (resultIdx, resultDone) = Counter(offload.io.result.fire, expectedResults.length)
 
   offload.io.in.valid := inputValid
   offload.io.in.bits.data := dataWords(inIdx)

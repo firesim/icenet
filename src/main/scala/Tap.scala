@@ -98,7 +98,7 @@ class NetworkTap[T <: Data](
   }
 
   val headerFire = state === s_output_header && selectedReady
-  val bodyFire = state === s_forward_body && io.inflow.fire()
+  val bodyFire = state === s_forward_body && io.inflow.fire
 
   when (headerFire) {
     headerIdx := headerIdx + 1.U

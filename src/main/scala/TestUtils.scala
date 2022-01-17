@@ -35,7 +35,7 @@ class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {
     dataIdx := 0.U
   }
 
-  when (io.out.fire()) {
+  when (io.out.fire) {
     dataIdx := dataIdx + 1.U
     pktOffset := pktOffset + 1.U
     when (io.out.bits.last) {
@@ -67,7 +67,7 @@ class PacketCheck(
   val checkKeepVec = VecInit(checkKeep.map(_.U(NET_IF_BYTES.W)))
   val checkLastVec = VecInit(checkLast.map(_.B))
 
-  val (checkIdx, checkDone) = Counter(io.in.fire(), checkDataVec.length)
+  val (checkIdx, checkDone) = Counter(io.in.fire, checkDataVec.length)
 
   val finished = RegInit(false.B)
 
