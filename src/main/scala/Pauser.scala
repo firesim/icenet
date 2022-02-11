@@ -79,7 +79,7 @@ class Pauser(creditInit: Int, nBuckets: Int) extends Module
 
   when (outPaused) { outPauseTimer := outPauseTimer - 1.U }
 
-  when (io.int.in.fire()) {
+  when (io.int.in.fire) {
     val data = io.int.in.bits.data
 
     switch (state) {
@@ -105,7 +105,7 @@ class Pauser(creditInit: Int, nBuckets: Int) extends Module
   }
 
   for (i <- 0 until nBuckets) {
-    credits(i) := credits(i) - io.int.in.fire() + io.in_free(i)
+    credits(i) := credits(i) - io.int.in.fire + io.in_free(i)
   }
 
   val arb = Module(new PacketArbiter(2))
@@ -117,7 +117,7 @@ class Pauser(creditInit: Int, nBuckets: Int) extends Module
   val outVec = VecInit(outHeader.toWords() :+ Cat(
     htons(io.settings.quanta), htons(PAUSE_CTRL.U(16.W))))
   val sendPause = RegInit(false.B)
-  val (outIdx, outDone) = Counter(arb.io.in(0).fire(), outVec.size)
+  val (outIdx, outDone) = Counter(arb.io.in(0).fire, outVec.size)
 
   arb.io.in(0).valid := sendPause
   arb.io.in(0).bits.data := outVec(outIdx)
@@ -145,7 +145,7 @@ class Pauser(creditInit: Int, nBuckets: Int) extends Module
   arb.io.in(1).bits := io.int.out.bits
   io.int.out.ready := canForward && arb.io.in(1).ready
 
-  when (arb.io.in(1).fire()) {
+  when (arb.io.in(1).fire) {
     when (!outInProgress) { outInProgress := true.B }
     when (arb.io.in(1).bits.last) { outInProgress := false.B }
   }
@@ -210,11 +210,11 @@ class PauserTest extends UnitTest {
   val started = RegInit(false.B)
 
   val sending = RegInit(false.B)
-  val (sendIdx, sendPktDone) = Counter(lcomplex.io.int.out.fire(), pktData.size)
+  val (sendIdx, sendPktDone) = Counter(lcomplex.io.int.out.fire, pktData.size)
   val (sendPhase, sendDone) = Counter(sendPktDone, nPackets)
 
   val receiving = RegInit(false.B)
-  val (recvIdx, recvPktDone) = Counter(lcomplex.io.int.in.fire(), pktData.size)
+  val (recvIdx, recvPktDone) = Counter(lcomplex.io.int.in.fire, pktData.size)
   val (recvPhase, recvDone) = Counter(recvPktDone, nPackets)
 
   lcomplex.io.int.out.valid := sending

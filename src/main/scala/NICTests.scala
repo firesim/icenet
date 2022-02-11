@@ -54,7 +54,7 @@ class IceNicTestSendDriver(
     val memIdx = Reg(UInt(log2Ceil(totalMemCount).W))
 
     val outSend = TwoWayCounter(
-      io.send.req.fire(), io.send.comp.fire(), sendReqs.size)
+      io.send.req.fire, io.send.comp.fire, sendReqs.size)
 
     val writeAddr = sendReqAddrVec(reqIdx) + (memIdx << byteAddrBits.U)
     val writeData = sendDataVec(sendReqBase(reqIdx) + memIdx)
@@ -79,9 +79,9 @@ class IceNicTestSendDriver(
       state := s_write_req
     }
 
-    when (tl.a.fire()) { state := s_write_resp }
+    when (tl.a.fire) { state := s_write_resp }
 
-    when (tl.d.fire()) {
+    when (tl.d.fire) {
       memIdx := memIdx + 1.U
       state := s_write_req
 
@@ -95,7 +95,7 @@ class IceNicTestSendDriver(
       }
     }
 
-    when (io.send.req.fire()) {
+    when (io.send.req.fire) {
       reqIdx := reqIdx + 1.U
       when (reqIdx === (sendReqs.size - 1).U) {
         reqIdx := 0.U
@@ -132,7 +132,7 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
     val memIdx = Reg(UInt(log2Ceil(recvData.size).W))
 
     val outRecv = TwoWayCounter(
-      io.recv.req.fire(), io.recv.comp.fire(), recvReqVec.size)
+      io.recv.req.fire, io.recv.comp.fire, recvReqVec.size)
 
     tl.a.valid := state === s_check_req
     tl.a.bits := edge.Get(
@@ -153,7 +153,7 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
       state := s_recv
     }
 
-    when (io.recv.req.fire()) {
+    when (io.recv.req.fire) {
       reqIdx := reqIdx + 1.U
       when (reqIdx === (recvReqVec.size - 1).U) {
         reqIdx := 0.U
@@ -267,8 +267,8 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
     val sendReqVec = VecInit(sendReqs.map { case (start, len, part) =>
       Cat(part.B, len.U(15.W), start.U(48.W))
     })
-    val (sendReqIdx, sendReqDone) = Counter(sendPathIO.send.req.fire(), sendReqs.size)
-    val (sendCompIdx, sendCompDone) = Counter(sendPathIO.send.comp.fire(), sendReqs.size)
+    val (sendReqIdx, sendReqDone) = Counter(sendPathIO.send.req.fire, sendReqs.size)
+    val (sendCompIdx, sendCompDone) = Counter(sendPathIO.send.comp.fire, sendReqs.size)
 
     val started = RegInit(false.B)
     val requesting = RegInit(false.B)
@@ -351,14 +351,14 @@ class IceNicTest(implicit p: Parameters) extends NICLazyModule {
     val cycle_count = Reg(UInt(64.W))
     val recv_count = Reg(UInt(1.W))
 
-    when (count_state === count_start && sendPath.module.io.send.req.fire()) {
+    when (count_state === count_start && sendPath.module.io.send.req.fire) {
       count_state := count_up
       cycle_count := 0.U
       recv_count := 1.U
     }
     when (count_state === count_up) {
       cycle_count := cycle_count + 1.U
-      when (recvPath.module.io.recv.comp.fire()) {
+      when (recvPath.module.io.recv.comp.fire) {
         recv_count := recv_count - 1.U
         when (recv_count === 0.U) { count_state := count_print }
       }
@@ -410,14 +410,14 @@ class MisalignedTestDriver(implicit p: Parameters) extends Module {
        s_outdata1 :: s_outdata2 :: s_indata :: s_done :: Nil) = Enum(9)
   val state = RegInit(s_start)
 
-  val (recvReqIdx, recvReqDone) = Counter(io.recv.req.fire(), 2)
-  val (recvCompIdx, recvCompDone) = Counter(io.recv.comp.fire(), 2)
+  val (recvReqIdx, recvReqDone) = Counter(io.recv.req.fire, 2)
+  val (recvCompIdx, recvCompDone) = Counter(io.recv.comp.fire, 2)
 
   val (outIdx1, outDone1) = Counter(
     state === s_outdata1 && io.net.out.ready, outData1.size)
   val (outIdx2, outDone2) = Counter(
     state === s_outdata2 && io.net.out.ready, outData2.size)
-  val (inIdx, inDone) = Counter(io.net.in.fire(), expData.size)
+  val (inIdx, inDone) = Counter(io.net.in.fire, expData.size)
 
   val outBits1 = Wire(new StreamChannel(NET_IF_WIDTH))
   outBits1.data := outData1(outIdx1)
@@ -452,7 +452,7 @@ class MisalignedTestDriver(implicit p: Parameters) extends Module {
 
   when (recvCompDone) { state := s_sendreq }
 
-  when (io.send.req.fire()) { state := s_indata }
+  when (io.send.req.fire) { state := s_indata }
 
   when (inDone) { state := s_done }
 

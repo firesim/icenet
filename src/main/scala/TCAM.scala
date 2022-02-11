@@ -13,8 +13,6 @@ class TCAMMatchIO(n: Int, dataBits: Int) extends Bundle {
   val addr = Input(UInt(addrBits.W))
   val found = Input(Bool())
 
-  override def cloneType =
-    new TCAMMatchIO(n, dataBits).asInstanceOf[this.type]
 }
 
 class TCAM(address: BigInt, val n: Int, val dataBits: Int, val nPorts: Int)
@@ -56,7 +54,7 @@ class TCAMModule(outer: TCAM) extends LazyModuleImp(outer) {
     TLMessages.AccessAck, TLMessages.AccessAckData)
   tl.d.bits.data := Mux(regsel, maskArr(wordaddr), dataArr(wordaddr))
 
-  when (acq.fire() && edge.hasData(acq.bits)) {
+  when (acq.fire && edge.hasData(acq.bits)) {
     when (regsel) {
       maskArr(wordaddr) := acq.bits.data(outer.dataBits - 1, 0)
     } .otherwise {

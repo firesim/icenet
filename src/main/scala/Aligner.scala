@@ -41,17 +41,17 @@ class Aligner(dataBits: Int) extends Module {
   io.in.ready := full_nbytes < dataBytes.U ||
                  (io.out.ready && !last)
 
-  when (io.in.fire() && io.out.fire()) {
+  when (io.in.fire && io.out.fire) {
     data := full_data >> dataBits.U
     keep := full_keep >> dataBytes.U
     last := io.in.bits.last && !fwd_last
     nbytes := Mux(fwd_last, 0.U, full_nbytes - dataBytes.U)
-  } .elsewhen (io.in.fire()) {
+  } .elsewhen (io.in.fire) {
     data := full_data
     keep := full_keep
     last := io.in.bits.last
     nbytes := full_nbytes
-  } .elsewhen (io.out.fire()) {
+  } .elsewhen (io.out.fire) {
     data := 0.U
     keep := 0.U
     last := false.B
@@ -88,8 +88,8 @@ class AlignerTest extends UnitTest {
 
   val aligner = Module(new Aligner(NET_IF_WIDTH))
 
-  val (inIdx, inDone) = Counter(aligner.io.in.fire(), inData.size)
-  val (outIdx, outDone) = Counter(aligner.io.out.fire(), outData.size)
+  val (inIdx, inDone) = Counter(aligner.io.in.fire, inData.size)
+  val (outIdx, outDone) = Counter(aligner.io.out.fire, outData.size)
 
   aligner.io.in.valid := sending
   aligner.io.in.bits.data := inData(inIdx)

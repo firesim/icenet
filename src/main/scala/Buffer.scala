@@ -174,7 +174,7 @@ class NetworkPacketBuffer[T <: Data](
   val customDrop = dropChecks.map(check => check(
                                     header,
                                     io.stream.in.bits,
-                                    io.stream.in.fire() && headerValid))
+                                    io.stream.in.fire && headerValid))
                              .foldLeft(false.B)(_ || _)
   val startDropping =
     (inPhase === outPhase && hasPackets) ||
@@ -183,12 +183,12 @@ class NetworkPacketBuffer[T <: Data](
   val capDrop = startDropping || inDrop
   val nonCapDrop = !headerValid || customDrop
   val anyDrop = capDrop || nonCapDrop
-  val dropLastFire = anyDrop && io.stream.in.fire() && io.stream.in.bits.last
+  val dropLastFire = anyDrop && io.stream.in.fire && io.stream.in.bits.last
 
   // io.free indicates the number of flits being freed up on a cycle
   io.free := ren + Mux(dropLastFire, inIdx + 1.U, 0.U)
 
-  when (io.stream.out.fire()) { outValidReg := false.B }
+  when (io.stream.out.fire) { outValidReg := false.B }
 
   when (readLen) { lengthKnown := true.B }
 
@@ -210,7 +210,7 @@ class NetworkPacketBuffer[T <: Data](
 
   when (ren =/= wen) { maybeFull := wen }
 
-  when (io.stream.in.fire()) {
+  when (io.stream.in.fire) {
     when (inIdx === 0.U) { startHead := bufHead }
     when (startDropping) { inDrop := true.B }
     wen := !startDropping && !inDrop
@@ -313,7 +313,7 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
     state := s_input
   }
 
-  when (buffer.io.stream.in.fire()) {
+  when (buffer.io.stream.in.fire) {
     inIdx := inIdx + 1.U
     when (buffer.io.stream.in.bits.last) {
       inIdx := 0.U
@@ -322,7 +322,7 @@ class NetworkPacketBufferTest extends UnitTest(100000) {
     }
   }
 
-  when (buffer.io.stream.out.fire()) {
+  when (buffer.io.stream.out.fire) {
     outIdx := outIdx + 1.U
     when (buffer.io.stream.out.bits.last) {
       outIdx := 0.U
@@ -348,8 +348,6 @@ class ReservationBufferAlloc(nXacts: Int, nWords: Int) extends Bundle {
   val id = UInt(xactIdBits.W)
   val count = UInt(countBits.W)
 
-  override def cloneType =
-    new ReservationBufferAlloc(nXacts, nWords).asInstanceOf[this.type]
 }
 
 class ReservationBufferData(nXacts: Int, dataBits: Int) extends Bundle {
@@ -358,8 +356,6 @@ class ReservationBufferData(nXacts: Int, dataBits: Int) extends Bundle {
   val id = UInt(xactIdBits.W)
   val data = new StreamChannel(dataBits)
 
-  override def cloneType =
-    new ReservationBufferData(nXacts, dataBits).asInstanceOf[this.type]
 }
 
 class ReservationBuffer(nXacts: Int, nWords: Int, dataBits: Int) extends Module {
@@ -394,9 +390,9 @@ class ReservationBuffer(nXacts: Int, nWords: Int, dataBits: Int) extends Module 
   val ren = (!occupied || io.out.ready) && (bufValid >> tail)(0)
 
   count := count +
-              Mux(io.alloc.fire(), io.alloc.bits.count, 0.U) -
-              Mux(io.out.fire(), 1.U, 0.U)
-  bufValid := (bufValid | Mux(io.in.fire(), UIntToOH(curXactHead), 0.U)) &
+              Mux(io.alloc.fire, io.alloc.bits.count, 0.U) -
+              Mux(io.out.fire, 1.U, 0.U)
+  bufValid := (bufValid | Mux(io.in.fire, UIntToOH(curXactHead), 0.U)) &
                          ~Mux(ren, UIntToOH(tail), 0.U)
 
   io.alloc.ready := !full
@@ -404,22 +400,22 @@ class ReservationBuffer(nXacts: Int, nWords: Int, dataBits: Int) extends Module 
   io.out.valid := occupied
   io.out.bits := buffer.io.read.data
 
-  buffer.io.write.en := io.in.fire()
+  buffer.io.write.en := io.in.fire
   buffer.io.write.addr := curXactHead
   buffer.io.write.data := io.in.bits.data
   buffer.io.read.en := ren
   buffer.io.read.addr := tail
 
-  when (io.alloc.fire()) {
+  when (io.alloc.fire) {
     xactHeads(io.alloc.bits.id) := head
     head := incWrap(head, io.alloc.bits.count)
   }
 
-  when (io.in.fire()) {
+  when (io.in.fire) {
     xactHeads(io.in.bits.id) := incWrap(curXactHead, 1.U)
   }
 
-  when (io.out.fire()) { occupied := false.B }
+  when (io.out.fire) { occupied := false.B }
 
   when (ren) {
     occupied := true.B
@@ -435,8 +431,8 @@ class PacketCollectionBuffer(bufWords: Int) extends Module {
 
   val queue = Module(new Queue(new StreamChannel(NET_IF_WIDTH), bufWords))
   val pktCount = TwoWayCounter(
-    queue.io.enq.fire() && queue.io.enq.bits.last,
-    queue.io.deq.fire() && queue.io.deq.bits.last,
+    queue.io.enq.fire && queue.io.enq.bits.last,
+    queue.io.deq.fire && queue.io.deq.bits.last,
     maxPackets)
   val canDequeue = pktCount > 0.U
 

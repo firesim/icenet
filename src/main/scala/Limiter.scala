@@ -51,13 +51,13 @@ class RateLimiter[T <: Data](typ: T) extends Module {
 
   def uint_min(a: UInt, b: UInt) = Mux(a < b, a, b)
 
-  when (inc_trigger && io.out.fire()) {
+  when (inc_trigger && io.out.fire) {
     val next_tokens = tokens +& (io.settings.inc - 1.U)
     tokens := uint_min(next_tokens, io.settings.size)
   } .elsewhen (inc_trigger) {
     val next_tokens = tokens +& io.settings.inc
     tokens := uint_min(next_tokens, io.settings.size)
-  } .elsewhen (io.out.fire()) {
+  } .elsewhen (io.out.fire) {
     tokens := tokens - 1.U
   }
 }
@@ -89,8 +89,8 @@ class RateLimiterTest extends UnitTest {
   limiter.io.settings.period := 3.U
   limiter.io.settings.size := 2.U
 
-  val (sendCount, sendDone) = Counter(limiter.io.in.fire(), nFlits)
-  val (recvCount, recvDone) = Counter(limiter.io.out.fire(), nFlits)
+  val (sendCount, sendDone) = Counter(limiter.io.in.fire, nFlits)
+  val (recvCount, recvDone) = Counter(limiter.io.out.fire, nFlits)
 
   when (io.start && !started) {
     started := true.B
