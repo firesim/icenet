@@ -179,7 +179,8 @@ class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     nMemXacts, outBufFlits, maxAcquireBytes))
   val node = reader.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle {
       val send = Flipped(new IceNicSendIO)
       val tap = Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH))))
@@ -246,7 +247,8 @@ class IceNicWriter(implicit p: Parameters) extends NICLazyModule {
   val writer = LazyModule(new StreamWriter(nMemXacts, maxAcquireBytes))
   val node = writer.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle {
       val recv = Flipped(new IceNicRecvIO)
       val in = Flipped(Decoupled(new StreamChannel(NET_IF_WIDTH)))
@@ -287,7 +289,7 @@ class IceNicRecvPath(val tapFuncs: Seq[EthernetHeader => Bool] = Nil)
   lazy val module = new IceNicRecvPathModule(this)
 }
 
-class IceNicRecvPathModule(outer: IceNicRecvPath)
+class IceNicRecvPathModule(val outer: IceNicRecvPath)
     extends LazyModuleImp(outer) with HasNICParameters {
   val io = IO(new Bundle {
     val recv = Flipped(new IceNicRecvIO)
@@ -433,7 +435,8 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
   dmanode := TLWidthWidget(NET_IF_BYTES) := sendPath.node
   dmanode := TLWidthWidget(NET_IF_BYTES) := recvPath.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle {
       val ext = new NICIO
       val tapOut = Vec(tapOutFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH)))
