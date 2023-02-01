@@ -19,7 +19,8 @@ class IceNicTestSendDriver(
   val node = TLHelper.makeClientNode(
     name = "test-send-driver", sourceId = IdRange(0, 1))
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO {
       val send = new IceNicSendIO
     })
@@ -111,7 +112,8 @@ class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
   val node = TLHelper.makeClientNode(
     name = "test-recv-driver", sourceId = IdRange(0, 1))
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO {
       val recv = new IceNicRecvIO
     })
@@ -209,7 +211,8 @@ class IceNicRecvTest(implicit p: Parameters) extends NICLazyModule {
   mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
     TLHelper.latency(MEM_LATENCY, xbar.node)
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
     val gen = Module(new PacketGen(recvLens, testData))
@@ -260,7 +263,8 @@ class IceNicSendTest(implicit p: Parameters) extends LazyModule {
   val RLIMIT_PERIOD = 0
   val RLIMIT_SIZE = 8
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
     val sendPathIO = sendPath.module.io
@@ -330,7 +334,8 @@ class IceNicTest(implicit p: Parameters) extends NICLazyModule {
   mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
     TLHelper.latency(MEM_LATENCY, xbar.node)
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
     sendPath.module.io.send <> sendDriver.module.io.send
@@ -478,7 +483,8 @@ class MisalignedTest(implicit p: Parameters) extends NICLazyModule {
   mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
               TLBuffer() := xbar.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val io = IO(new Bundle with UnitTestIO)
 
     val driver = Module(new MisalignedTestDriver)

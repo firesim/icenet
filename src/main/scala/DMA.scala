@@ -19,7 +19,8 @@ class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
   val core = LazyModule(new StreamReaderCore(nXacts, outFlits, maxBytes))
   val node = core.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val dataBits = core.module.dataBits
 
     val io = IO(new Bundle {
@@ -46,7 +47,8 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val (tl, edge) = node.out(0)
     val dataBits = tl.params.dataBits
     val beatBytes = dataBits / 8
@@ -182,7 +184,8 @@ class StreamWriter(nXacts: Int, maxBytes: Int)
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
     val (tl, edge) = node.out(0)
     val dataBits = tl.params.dataBits
     val beatBytes = dataBits / 8
