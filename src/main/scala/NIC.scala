@@ -2,7 +2,7 @@ package icenet
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.{IO}
+import chisel3.experimental.{IO, DataMirror}
 import freechips.rocketchip.subsystem.{BaseSubsystem, TLBusWrapperLocation, PBUS, FBUS}
 import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
@@ -10,8 +10,12 @@ import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util._
 import freechips.rocketchip.prci.{ClockSinkDomain}
-import testchipip.{StreamIO, StreamChannel, TLHelper, ClockedIO}
 import IceNetConsts._
+
+class ClockedIO[T <: Data](private val gen: T) extends Bundle {
+  val clock = Output(Clock())
+  val bits = DataMirror.internal.chiselTypeClone[T](gen)
+}
 
 /**
  * @inBufFlits How many flits in the input buffer(s)

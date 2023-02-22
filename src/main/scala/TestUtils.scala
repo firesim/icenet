@@ -4,7 +4,6 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.util.LatencyPipe
 import scala.math.max
-import testchipip.{StreamChannel, StreamIO}
 import IceNetConsts._
 
 class PacketGen(lengths: Seq[Int], genData: Seq[BigInt]) extends Module {

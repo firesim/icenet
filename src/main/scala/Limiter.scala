@@ -3,7 +3,6 @@ package icenet
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
-import testchipip.SerialIO
 import IceNetConsts._
 
 class RateLimiterSettings extends Bundle {

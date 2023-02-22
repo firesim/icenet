@@ -5,7 +5,7 @@ import chisel3.util._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp, IdRange}
 import freechips.rocketchip.util.DecoupledHelper
-import testchipip.{StreamChannel, TLHelper}
+import freechips.rocketchip.tilelink._
 
 class StreamReadRequest extends Bundle {
   val address = UInt(48.W)
@@ -44,8 +44,8 @@ class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
 
 class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     (implicit p: Parameters) extends LazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "stream-reader", sourceId = IdRange(0, nXacts))
+  val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+    name = "stream-reader", sourceId = IdRange(0, nXacts))))))
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
@@ -181,8 +181,8 @@ class StreamWriteRequest extends Bundle {
 
 class StreamWriter(nXacts: Int, maxBytes: Int)
     (implicit p: Parameters) extends LazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "stream-writer", sourceId = IdRange(0, nXacts))
+  val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+    name = "stream-writer", sourceId = IdRange(0, nXacts))))))
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {

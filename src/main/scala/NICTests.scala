@@ -9,15 +9,14 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.unittest.{UnitTest, UnitTestIO}
 import freechips.rocketchip.util.{LatencyPipe, TwoWayCounter, UIntIsOneOf}
-import testchipip.{StreamIO, StreamChannel, TLHelper}
 import scala.math.max
 import IceNetConsts._
 
 class IceNicTestSendDriver(
     sendReqs: Seq[(Int, Int, Boolean)],
     sendData: Seq[BigInt])(implicit p: Parameters) extends LazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "test-send-driver", sourceId = IdRange(0, 1))
+  val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+    name = "test-send-driver", sourceId = IdRange(0, 1))))))
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
@@ -108,9 +107,8 @@ class IceNicTestSendDriver(
 
 class IceNicTestRecvDriver(recvReqs: Seq[Int], recvData: Seq[BigInt])
     (implicit p: Parameters) extends LazyModule {
-
-  val node = TLHelper.makeClientNode(
-    name = "test-recv-driver", sourceId = IdRange(0, 1))
+  val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+    name = "test-recv-driver", sourceId = IdRange(0, 1))))))
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
@@ -208,8 +206,7 @@ class IceNicRecvTest(implicit p: Parameters) extends NICLazyModule {
 
   xbar.node := recvDriver.node
   xbar.node := recvPath.node
-  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
-    TLHelper.latency(MEM_LATENCY, xbar.node)
+  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) := TLBuffer.chainNode(MEM_LATENCY) := xbar.node
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
@@ -331,8 +328,7 @@ class IceNicTest(implicit p: Parameters) extends NICLazyModule {
   xbar.node := recvDriver.node
   xbar.node := sendPath.node
   xbar.node := recvPath.node
-  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) :=
-    TLHelper.latency(MEM_LATENCY, xbar.node)
+  mem.node := TLFragmenter(NET_IF_BYTES, maxAcquireBytes) := TLBuffer.chainNode(MEM_LATENCY) := xbar.node
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
