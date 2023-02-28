@@ -5,7 +5,6 @@ import chisel3.util._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
-import testchipip.TLHelper
 
 class TCAMMatchIO(n: Int, dataBits: Int) extends Bundle {
   val addrBits = log2Ceil(n)
@@ -22,11 +21,11 @@ class TCAM(address: BigInt, val n: Int, val dataBits: Int, val nPorts: Int)
   val beatBytes = 1 << byteAddrBits
   val addrMask = (1 << (1 + addrBits + byteAddrBits)) - 1
 
-  val node = TLHelper.makeManagerNode(beatBytes, TLSlaveParameters.v1(
+  val node = TLManagerNode(Seq(TLSlavePortParameters.v1(Seq(TLSlaveParameters.v1(
     address = Seq(AddressSet(address, addrMask)),
     regionType = RegionType.PUT_EFFECTS,
     supportsGet = TransferSizes(1, beatBytes),
-    supportsPutFull = TransferSizes(1, beatBytes)))
+    supportsPutFull = TransferSizes(1, beatBytes))), beatBytes)))
 
   lazy val module = new TCAMModule(this)
 }

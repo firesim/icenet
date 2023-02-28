@@ -4,7 +4,6 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.unittest.UnitTest
 import freechips.rocketchip.util.{DecoupledHelper, UIntIsOneOf}
-import testchipip.{StreamIO, StreamChannel}
 import IceNetConsts._
 import NetworkHelpers._
 
