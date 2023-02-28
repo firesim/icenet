@@ -12,6 +12,7 @@ import freechips.rocketchip.util._
 import freechips.rocketchip.prci.{ClockSinkDomain}
 import IceNetConsts._
 
+// This is copied from testchipip to avoid dependencies
 class ClockedIO[T <: Data](private val gen: T) extends Bundle {
   val clock = Output(Clock())
   val bits = DataMirror.internal.chiselTypeClone[T](gen)

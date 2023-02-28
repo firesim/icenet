@@ -3,7 +3,8 @@ package icenet
 import chisel3._
 import chisel3.util._
 
-
+// These classes originated in testchipip, but are copied
+// here to reduce dependencies
 class StreamChannel(val w: Int) extends Bundle {
   val data = UInt(w.W)
   val keep = UInt((w/8).W)
