@@ -2,7 +2,7 @@ package icenet
 
 import chisel3._
 import freechips.rocketchip.subsystem.BaseSubsystemConfig
-import freechips.rocketchip.config.{Parameters, Config}
+import org.chipsalliance.cde.config.{Parameters, Config}
 import freechips.rocketchip.unittest.UnitTests
 
 class WithIceNetUnitTests extends Config((site, here, up) => {
