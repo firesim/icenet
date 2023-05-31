@@ -557,8 +557,8 @@ trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
 
     val icenic = domain { LazyModule(new IceNIC(address, manager.beatBytes)) }
 
-    manager.toVariableWidthSlave(Some(portName)) { icenic.mmionode }
-    client.fromPort(Some(portName))() :=* icenic.dmanode
+    manager.coupleTo(portName) { icenic.mmionode := TLFragmenter(manager.beatBytes, manager.blockBytes) := _ }
+    client.coupleFrom(portName) { _ :=* icenic.dmanode }
     ibus.fromSync := icenic.intnode
 
     val inner_io = domain { InModuleBody {
