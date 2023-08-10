@@ -148,10 +148,10 @@ trait IceNicControllerModule extends HasRegMap with HasNICParameters {
   io.rxcsumRes.ready := rxcsumResQueue.io.enq.ready
 
   io.csumEnable := csumEnable
-
+  //Width of 0x00 and 0x08 should match the width of the registers being written, not NET_IF_WIDTH
   regmap(
-    0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
-    0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
+    0x00 -> Seq(RegField.w(64/*NET_IF_WIDTH*/, sendReqQueue.io.enq)),
+    0x08 -> Seq(RegField.w(64/*NET_IF_WIDTH*/, recvReqQueue.io.enq)),
     0x10 -> Seq(RegField.r(1, sendCompRead)),
     0x12 -> Seq(RegField.r(NET_LEN_BITS, recvCompQueue.io.deq)),
     0x14 -> Seq(

@@ -3,7 +3,7 @@ package icenet
 import chisel3._
 
 object IceNetConsts {
-  val NET_IF_WIDTH = 64
+  val NET_IF_WIDTH = 256
   val NET_IF_BYTES = NET_IF_WIDTH/8
   val NET_LEN_BITS = 16
 

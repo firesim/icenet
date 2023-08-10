@@ -248,13 +248,13 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
   val dataBytes = dataBits/8
 
   val headerBytes = ETH_HEAD_BYTES + IPV4_HEAD_BYTES + TCP_HEAD_BYTES
-  val headerWords = headerBytes / dataBytes
+  val headerWords = if(headerBytes%dataBytes==0) (headerBytes/dataBytes) else (headerBytes/dataBytes + 1)
   val headerVec = Reg(Vec(headerWords, UInt(dataBits.W)))
   val header = headerVec.asTypeOf(new FullHeader)
-  val headerIdx = RegInit(0.U(log2Ceil(headerWords).W))
+  val headerIdx = if(headerWords==1) RegInit(0.U(1.W)) else RegInit(0.U(log2Ceil(headerWords).W))
 
   val pseudoHeaderBytes = 12 + TCP_HEAD_BYTES
-  val pseudoHeaderWords = pseudoHeaderBytes / dataBytes
+  val pseudoHeaderWords = if(pseudoHeaderBytes%dataBytes==0) (pseudoHeaderBytes / dataBytes) else (pseudoHeaderBytes/dataBytes + 1)
   val pseudoHeader = Wire(new PseudoHeader)
   val pseudoHeaderVec = pseudoHeader.asTypeOf(
     Vec(pseudoHeaderWords, UInt(dataBits.W)))
@@ -267,8 +267,8 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
   pseudoHeader.source_ip := header.ipv4.source_ip
 
   require(dataBits >= 16)
-  require(headerBytes % dataBytes == 0)
-  require(pseudoHeaderBytes % dataBytes == 0)
+  //require(headerBytes % dataBytes == 0)
+  //require(pseudoHeaderBytes % dataBytes == 0)
 
   val (s_header_in :: s_csum_req ::
        s_header_csum :: s_body_csum ::
@@ -312,7 +312,9 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
       state := s_result
     } .elsewhen (state === s_header_in) {
       headerVec(headerIdx) := io.in.bits.data
-      headerIdx := headerIdx + 1.U
+      if(headerWords != 1) {
+        headerIdx := headerIdx + 1.U
+      }
       when (headerIdx === (headerWords-1).U) {
         resultExpected := headerOK
         state := Mux(headerOK, s_csum_req, s_passthru)
@@ -326,7 +328,9 @@ class TCPChecksumOffload(dataBits: Int) extends Module {
   }
 
   when (state === s_header_csum && csum.io.stream.in.ready) {
-    headerIdx := headerIdx + 1.U
+    if(pseudoHeaderWords != 1){
+      headerIdx := headerIdx + 1.U
+    }
     when (headerIdx === (pseudoHeaderWords-1).U) {
       state := s_body_csum
     }
