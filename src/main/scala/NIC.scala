@@ -16,6 +16,7 @@ import IceNetConsts._
 class ClockedIO[T <: Data](private val gen: T) extends Bundle {
   val clock = Output(Clock())
   val bits = DataMirror.internal.chiselTypeClone[T](gen)
+  val reset = Output(Reset())
 }
 
 /**
@@ -571,6 +572,7 @@ trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
       val outer_io = IO(new ClockedIO(new NICIOvonly)).suggestName("nic")
       outer_io.bits <> inner_io
       outer_io.clock := domain.module.clock
+      outer_io.reset := domain.module.reset
       outer_io
     }
     outer_io
