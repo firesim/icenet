@@ -579,7 +579,7 @@ trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
 
 
 object NicLoopback {
-  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig], qDepth: Int, latency: Int = 10) {
+  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig], qDepth: Int, latency: Int = 10): Unit = {
     net.foreach { netio =>
       import PauseConsts.BT_PER_QUANTA
       val packetWords = nicConf.get.packetMaxBytes / NET_IF_BYTES
@@ -606,11 +606,9 @@ object NicLoopback {
     }
   }
 
-  def connect(net: Option[NICIOvonly], nicConf: Option[NICConfig]) {
-    net.foreach { netio =>
-      val packetWords = nicConf.get.packetMaxBytes / NET_IF_BYTES
-      NicLoopback.connect(net, nicConf, 4 * packetWords)
-    }
+  def connect(net: NICIOvonly, nicConf: NICConfig): Unit = {
+    val packetWords = nicConf.packetMaxBytes / NET_IF_BYTES
+    NicLoopback.connect(Some(net), Some(nicConf), 4 * packetWords)
   }
 }
 
