@@ -9,7 +9,6 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util._
-import freechips.rocketchip.prci.{ClockSinkDomain}
 import IceNetConsts._
 
 // This is copied from testchipip to avoid dependencies
@@ -550,10 +549,9 @@ trait CanHavePeripheryIceNIC  { this: BaseSubsystem =>
   val icenicOpt = p(NICKey).map { params =>
     val manager = locateTLBusWrapper(p(NICAttachKey).slaveWhere)
     val client = locateTLBusWrapper(p(NICAttachKey).masterWhere)
-    val domain = LazyModule(new ClockSinkDomain(name=Some(portName)))
     // TODO: currently the controller is in the clock domain of the bus which masters it
     // we assume this is same as the clock domain of the bus the controller masters
-    domain.clockNode := manager.fixedClockNode
+    val domain = manager.generateSynchronousDomain.suggestName("icenic_domain")
 
     val icenic = domain { LazyModule(new IceNIC(address, manager.beatBytes)) }
 
