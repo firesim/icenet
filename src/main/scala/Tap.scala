@@ -41,31 +41,31 @@ class NetworkTap[T <: Data](
   val selectedReady = MuxCase(io.passthru.ready,
     route.zip(io.tapout.map(_.ready)))
 
-  io.inflow.ready := MuxLookup(state, false.B, Seq(
+  io.inflow.ready := MuxLookup(state, false.B)(Seq(
     s_collect_header -> true.B,
     s_forward_body -> selectedReady))
 
   val hasTapout = route.reduce(_ || _)
 
-  io.passthru.valid := MuxLookup(Cat(state, hasTapout), false.B, Seq(
+  io.passthru.valid := MuxLookup(Cat(state, hasTapout), false.B)(Seq(
     Cat(s_output_header, false.B) -> true.B,
     Cat(s_forward_body,  false.B) -> io.inflow.valid))
-  io.passthru.bits.data := MuxLookup(Cat(state, hasTapout), 0.U, Seq(
+  io.passthru.bits.data := MuxLookup(Cat(state, hasTapout), 0.U)(Seq(
     Cat(s_output_header, false.B) -> headerVec(headerIdx),
     Cat(s_forward_body,  false.B) -> io.inflow.bits.data))
-  io.passthru.bits.last := MuxLookup(Cat(state, hasTapout), false.B, Seq(
+  io.passthru.bits.last := MuxLookup(Cat(state, hasTapout), false.B)(Seq(
     Cat(s_output_header, false.B) -> (bodyLess && headerIdx === headerLen),
     Cat(s_forward_body,  false.B) -> io.inflow.bits.last))
   io.passthru.bits.keep := NET_FULL_KEEP
 
   io.tapout.zip(route).foreach { case (tapout, sel) =>
-    tapout.valid := MuxLookup(Cat(state, sel), false.B, Seq(
+    tapout.valid := MuxLookup(Cat(state, sel), false.B)(Seq(
       Cat(s_output_header, true.B) -> true.B,
       Cat(s_forward_body,  true.B) -> io.inflow.valid))
-    tapout.bits.data := MuxLookup(Cat(state, sel), 0.U, Seq(
+    tapout.bits.data := MuxLookup(Cat(state, sel), 0.U)(Seq(
       Cat(s_output_header, true.B) -> headerVec(headerIdx),
       Cat(s_forward_body,  true.B) -> io.inflow.bits.data))
-    tapout.bits.last := MuxLookup(Cat(state, sel), false.B, Seq(
+    tapout.bits.last := MuxLookup(Cat(state, sel), false.B)(Seq(
       Cat(s_output_header, true.B) -> (bodyLess && headerIdx === headerLen),
       Cat(s_forward_body,  true.B) -> io.inflow.bits.last))
     tapout.bits.keep := NET_FULL_KEEP
