@@ -6,7 +6,8 @@ import chisel3.experimental.{IO, DataMirror}
 import freechips.rocketchip.subsystem.{BaseSubsystem, TLBusWrapperLocation, PBUS, FBUS}
 import org.chipsalliance.cde.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
-import freechips.rocketchip.regmapper.{HasRegMap, RegField}
+import freechips.rocketchip.regmapper._
+import freechips.rocketchip.interrupts._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util._
 import IceNetConsts._
@@ -91,9 +92,24 @@ trait IceNicControllerBundle extends Bundle {
   val csumEnable = Output(Bool())
 }
 
-trait IceNicControllerModule extends HasRegMap with HasNICParameters {
-  implicit val p: Parameters
-  val io: IceNicControllerBundle
+case class IceNicControllerParams(address: BigInt, beatBytes: Int)
+
+/*
+ * Take commands from the CPU over TL2, expose as Queues
+ */
+class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
+    extends RegisterRouter(RegisterRouterParams("ice-nic", Seq("ucb-bar,ice-nic"),
+      c.address, beatBytes=c.beatBytes))
+    with HasTLControlRegMap
+    with HasInterruptSources
+    with HasNICParameters {
+  override def nInterrupts = 2
+  def tlRegmap(mapping: RegField.Map*): Unit = regmap(mapping:_*)
+  override lazy val module = new IceNiCControllerModuleImp(this)
+}
+
+class IceNiCControllerModuleImp(outer: IceNicController)(implicit p: Parameters) extends LazyModuleImp(outer) with HasNICParameters {
+  val io = IO(new Bundle with IceNicControllerBundle)
 
   val sendCompDown = WireInit(false.B)
 
@@ -123,8 +139,8 @@ trait IceNicControllerModule extends HasRegMap with HasNICParameters {
   io.send.comp.ready := sendCompCount < qDepth.U
   recvCompQueue.io.enq <> io.recv.comp
 
-  interrupts(0) := sendCompValid && intMask(0)
-  interrupts(1) := recvCompQueue.io.deq.valid && intMask(1)
+  outer.interrupts(0) := sendCompValid && intMask(0)
+  outer.interrupts(1) := recvCompQueue.io.deq.valid && intMask(1)
 
   val sendReqSpace = (qDepth.U - sendReqCount)
   val recvReqSpace = (qDepth.U - recvReqCount)
@@ -148,7 +164,7 @@ trait IceNicControllerModule extends HasRegMap with HasNICParameters {
 
   io.csumEnable := csumEnable
 
-  regmap(
+  outer.tlRegmap(
     0x00 -> Seq(RegField.w(NET_IF_WIDTH, sendReqQueue.io.enq)),
     0x08 -> Seq(RegField.w(NET_IF_WIDTH, recvReqQueue.io.enq)),
     0x10 -> Seq(RegField.r(1, sendCompRead)),
@@ -164,18 +180,6 @@ trait IceNicControllerModule extends HasRegMap with HasNICParameters {
     0x30 -> Seq(RegField.r(2, rxcsumResQueue.io.deq)),
     0x31 -> Seq(RegField(1, csumEnable)))
 }
-
-case class IceNicControllerParams(address: BigInt, beatBytes: Int)
-
-/*
- * Take commands from the CPU over TL2, expose as Queues
- */
-class IceNicController(c: IceNicControllerParams)(implicit p: Parameters)
-  extends TLRegisterRouter(
-    c.address, "ice-nic", Seq("ucbbar,ice-nic"),
-    interrupts = 2, beatBytes = c.beatBytes)(
-      new TLRegBundle(c, _)    with IceNicControllerBundle)(
-      new TLRegModule(c, _, _) with IceNicControllerModule)
 
 class IceNicSendPath(nInputTaps: Int = 0)(implicit p: Parameters)
     extends NICLazyModule {
@@ -433,7 +437,7 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
 
   val mmionode = TLIdentityNode()
   val dmanode = TLIdentityNode()
-  val intnode = control.intnode
+  val intnode = control.intXing(NoCrossing)
 
   control.node := TLAtomicAutomata() := mmionode
   dmanode := TLWidthWidget(NET_IF_BYTES) := sendPath.node
