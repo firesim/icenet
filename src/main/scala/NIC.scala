@@ -2,7 +2,7 @@ package icenet
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.{IO, DataMirror}
+import chisel3.reflect.DataMirror
 import freechips.rocketchip.subsystem.{BaseSubsystem, TLBusWrapperLocation, PBUS, FBUS}
 import org.chipsalliance.cde.config.{Field, Parameters}
 import freechips.rocketchip.diplomacy._
