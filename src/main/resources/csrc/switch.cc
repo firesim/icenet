@@ -11,6 +11,7 @@
 #include <sys/time.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include <linux/if.h>
 #include <linux/if_tun.h>
