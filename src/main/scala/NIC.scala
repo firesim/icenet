@@ -137,6 +137,8 @@ class IceNiCControllerModuleImp(outer: IceNicController)(implicit p: Parameters)
 
   io.send.req <> sendReqQueue.io.deq
   io.recv.req <> recvReqQueue.io.deq
+  midas.targetutils.PerfCounter(io.send.req.fire, "send_count", "# of xacts sent")
+  midas.targetutils.PerfCounter(io.recv.req.fire, "recv_count", "# of xacts recv")
   io.send.comp.ready := sendCompCount < qDepth.U
   recvCompQueue.io.enq <> io.recv.comp
 
