@@ -137,8 +137,8 @@ class IceNiCControllerModuleImp(outer: IceNicController)(implicit p: Parameters)
 
   io.send.req <> sendReqQueue.io.deq
   io.recv.req <> recvReqQueue.io.deq
-  midas.targetutils.PerfCounter(io.send.req.fire, "send_count", "# of xacts sent")
-  midas.targetutils.PerfCounter(io.recv.req.fire, "recv_count", "# of xacts recv")
+  midas.targetutils.PerfCounter(io.send.req.fire, "send_req_count", "# of req xacts sent")
+  midas.targetutils.PerfCounter(io.recv.req.fire, "recv_req_count", "# of req xacts recv")
   io.send.comp.ready := sendCompCount < qDepth.U
   recvCompQueue.io.enq <> io.recv.comp
 
@@ -453,6 +453,9 @@ class IceNIC(address: BigInt, beatBytes: Int = 8,
       val tapOut = Vec(tapOutFuncs.length, Decoupled(new StreamChannel(NET_IF_WIDTH)))
       val tapIn = Flipped(Vec(nInputTaps, Decoupled(new StreamChannel(NET_IF_WIDTH))))
     })
+
+    midas.targetutils.PerfCounter(io.ext.out.fire, "send_count", s"# of ${NET_IF_WIDTH}b net xacts sent ")
+    midas.targetutils.PerfCounter(io.ext.in.fire, "recv_count", s"# of ${NET_IF_WIDTH}b net xacts recv")
 
     sendPath.module.io.send <> control.module.io.send
     recvPath.module.io.recv <> control.module.io.recv
