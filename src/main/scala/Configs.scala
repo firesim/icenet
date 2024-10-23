@@ -26,6 +26,10 @@ class WithIceNetUnitTests extends Config((site, here, up) => {
 class IceNetUnitTestConfig extends Config(
   new WithIceNetUnitTests ++ new BaseSubsystemConfig)
 
+class WithNICJumboFrames extends Config((site, here, up) => {
+  case NICKey => up(NICKey).map(_.copy(packetMaxBytes = IceNetConsts.ETH_JUMBO_MAX_BYTES))
+})
+
 class WithIceNIC(inBufFlits: Int = 1800, usePauser: Boolean = false, ctrlQueueDepth: Int = 64)
     extends Config((site, here, up) => {
   case NICKey => Some(NICConfig(
