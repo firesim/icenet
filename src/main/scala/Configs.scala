@@ -30,10 +30,11 @@ class WithNICJumboFrames extends Config((site, here, up) => {
   case NICKey => up(NICKey).map(_.copy(packetMaxBytes = IceNetConsts.ETH_JUMBO_MAX_BYTES))
 })
 
-class WithIceNIC(inBufFlits: Int = 1800, usePauser: Boolean = false, ctrlQueueDepth: Int = 64)
+class WithIceNIC(inBufFlits: Int = 1800, outBufFlits: Int = 1800, usePauser: Boolean = false, ctrlQueueDepth: Int = 64)
     extends Config((site, here, up) => {
   case NICKey => Some(NICConfig(
     inBufFlits = inBufFlits,
+    outBufFlits = outBufFlits,
     ctrlQueueDepth = ctrlQueueDepth,
     usePauser = usePauser,
     checksumOffload = true))
